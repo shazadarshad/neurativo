@@ -1,0 +1,571 @@
+"""
+Transactional email via Resend.
+If RESEND_API_KEY is not configured, sends are skipped with a stdout log.
+
+Existing functions (team invites) use _send() synchronously.
+New transactional emails use _fire() which is fire-and-forget (daemon thread).
+
+HTML rendering: React Email templates in emails/ at project root.
+_render_template() calls tsx render.ts via subprocess; falls back to the
+inline Python HTML builders if node_modules isn't installed.
+"""
+import json
+import os
+import subprocess
+import sys
+import threading
+import httpx
+from app.core.config import settings
+
+# Path to the emails/ directory (three levels up from this file)
+_EMAILS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..', '..', '..', 'emails')
+)
+_TSX_BIN = os.path.join(
+    _EMAILS_DIR, 'node_modules', '.bin',
+    'tsx.cmd' if sys.platform == 'win32' else 'tsx'
+)
+
+
+def _render_template(template: str, props: dict) -> str | None:
+    """Render a React Email template to HTML via tsx subprocess.
+    Returns None if the emails/ node_modules are not installed or render fails.
+    """
+    if not os.path.exists(_TSX_BIN):
+        return None
+    try:
+        result = subprocess.run(
+            [_TSX_BIN, 'render.ts', template, json.dumps(props)],
+            cwd=_EMAILS_DIR,
+            capture_output=True,
+            text=True,
+            timeout=12,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+        print(f"[email] template render error ({template}): {result.stderr[:300]}")
+    except Exception as e:
+        print(f"[email] template render failed ({template}): {e}")
+    return None
+
+
+def _get_user_email(user_id: str) -> str | None:
+    """Fetch primary email for a Clerk user_id via the Clerk REST API."""
+    if not settings.CLERK_SECRET_KEY or not user_id:
+        return None
+    try:
+        r = httpx.get(
+            f"https://api.clerk.com/v1/users/{user_id}",
+            headers={"Authorization": f"Bearer {settings.CLERK_SECRET_KEY}"},
+            timeout=8,
+        )
+        if not r.is_success:
+            return None
+        data = r.json()
+        addrs = data.get("email_addresses") or []
+        primary_id = data.get("primary_email_address_id")
+        for a in addrs:
+            if a.get("id") == primary_id:
+                return a.get("email_address") or None
+        return addrs[0].get("email_address") if addrs else None
+    except Exception as e:
+        print(f"[email] clerk email fetch error: {e}")
+    return None
+
+
+def _send(to: str, subject: str, html: str) -> bool:
+    if not settings.RESEND_API_KEY:
+        print(f"[email] (no RESEND_API_KEY) To: {to} | Subject: {subject}")
+        return False
+    if not to or "@" not in to:
+        return False
+    try:
+        resp = httpx.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": settings.RESEND_FROM_EMAIL,
+                "to": [to],
+                "subject": subject,
+                "html": html,
+            },
+            timeout=15,
+        )
+        if resp.is_success:
+            print(f"[email] sent '{subject}' → {to}")
+            return True
+        print(f"[email] Resend error {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as e:
+        print(f"[email] send error: {e}")
+        return False
+
+
+def _fire(to: str, subject: str, html: str) -> None:
+    """Fire-and-forget: spawn daemon thread so the caller never blocks."""
+    threading.Thread(target=_send, args=(to, subject, html), daemon=True).start()
+
+
+def send_invite_email(to: str, org_name: str, inviter_name: str, join_url: str, seat_tier: str) -> bool:
+    tier_label = "Pro" if seat_tier == "pro" else "Student"
+    html = (_render_template('team-invite', {
+        'orgName': org_name, 'inviterName': inviter_name,
+        'joinUrl': join_url, 'seatTier': seat_tier,
+    }) or (
+        _base_template("Team Invitation",
+            _h(f"You're invited to join {org_name}")
+            + _p(f"{inviter_name} has invited you to join their team on Neurativo with a <strong>{tier_label}</strong> seat.")
+            + _btn("Accept invitation", join_url)
+            + _p("If you didn't expect this invite, you can ignore this email.", muted=True)
+        )
+    ))
+    return _send(to, f"You're invited to {org_name} on Neurativo", html)
+
+
+def send_seat_activated_email(to: str, org_name: str) -> bool:
+    html = (_render_template('seat-activated', {'orgName': org_name}) or
+            _base_template("Seat Activated",
+                _h(f"Welcome to {org_name}")
+                + _p("Your seat is now active. Head to Neurativo and start recording.")
+                + _btn("Open Neurativo", "https://neurativo.vercel.app/app")))
+    return _send(to, f"Your {org_name} seat is active", html)
+
+
+def send_seat_removed_email(to: str, org_name: str) -> bool:
+    html = (_render_template('seat-removed', {'orgName': org_name}) or
+            _base_template("Seat Removed",
+                _h("Seat removed")
+                + _p(f"Your <strong>{org_name}</strong> team seat on Neurativo has been removed. You can still use Neurativo on the free plan.")))
+    return _send(to, f"Your {org_name} seat has been removed", html)
+
+
+def send_payment_failed_email(to: str, org_name: str, org_slug: str = '') -> bool:
+    safe_slug = org_slug or org_name.lower().replace(' ', '-')
+    billing_url = f"https://neurativo.vercel.app/{safe_slug}/dashboard"
+    html = (_render_template('team-payment-failed', {'orgName': org_name, 'billingUrl': billing_url}) or
+            _base_template("Payment Issue",
+                _h(f"Payment failed — {org_name}")
+                + _p("We couldn't process your Neurativo Teams payment. Please update your payment method to keep your team's access.")
+                + _btn("Update billing", billing_url, bg="#dc2626")))
+    return _send(to, f"Action required: payment failed for {org_name}", html)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Transactional emails — individual billing / lifecycle events
+#  All _for_user variants resolve email from Clerk and are fire-and-forget.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _base_template(header_sub: str, body_html: str) -> str:
+    # Logo: official logo.png hosted on neurativo.com + wordmark fallback text
+    # img + alt text so it degrades gracefully when images are blocked
+    logo = f"""
+      <table cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="vertical-align:middle;">
+            <img src="https://neurativo.vercel.app/logo.png"
+                 alt="Neurativo"
+                 width="36" height="36"
+                 style="width:36px;height:36px;display:block;border:0;outline:none;">
+          </td>
+          <td style="padding-left:10px;vertical-align:middle;">
+            <span style="font-size:17px;font-weight:700;color:#111827;
+                         letter-spacing:-0.4px;line-height:1;
+                         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+              Neurativo
+            </span>
+            <br>
+            <span style="font-size:11px;color:#9ca3af;letter-spacing:0.01em;
+                         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+              {header_sub}
+            </span>
+          </td>
+        </tr>
+      </table>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Neurativo</title>
+</head>
+<body style="margin:0;padding:0;background:#f3f4f6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+
+<!--[if mso]>
+<center>
+<table width="580" cellpadding="0" cellspacing="0" border="0"><tr><td>
+<![endif]-->
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="background:#f3f4f6;min-width:100%;">
+  <tr>
+    <td align="center" style="padding:44px 16px;">
+
+      <!-- Card -->
+      <table width="580" cellpadding="0" cellspacing="0" border="0"
+             style="max-width:580px;width:100%;background:#ffffff;
+                    border:1px solid #e5e7eb;border-radius:14px;
+                    border-collapse:separate;">
+
+        <!-- Header -->
+        <tr>
+          <td style="padding:24px 32px 22px;border-bottom:1px solid #f3f4f6;
+                     background:#ffffff;border-radius:14px 14px 0 0;">
+            {logo}
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:30px 32px 26px;background:#ffffff;
+                     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;
+                     word-break:break-word;">
+            {body_html}
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:18px 32px 22px;border-top:1px solid #f3f4f6;
+                     background:#f9fafb;border-radius:0 0 14px 14px;">
+            <p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.7;
+                      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+              You're receiving this because you have a Neurativo account.
+              Questions? Just reply to this email.&nbsp;&nbsp;
+              <a href="https://neurativo.vercel.app" style="color:#9ca3af;text-decoration:underline;">neurativo.vercel.app</a>
+            </p>
+          </td>
+        </tr>
+
+      </table>
+      <!-- /Card -->
+
+    </td>
+  </tr>
+</table>
+
+<!--[if mso]>
+</td></tr></table>
+</center>
+<![endif]-->
+
+</body>
+</html>"""
+
+
+def _btn(text: str, url: str, bg: str = "#111827") -> str:
+    # Table-based button — renders correctly in Outlook, Gmail, Apple Mail
+    return (
+        f'<table cellpadding="0" cellspacing="0" border="0" style="margin-top:22px;">'
+        f'<tr><td style="background:{bg};border-radius:8px;padding:0;">'
+        f'<a href="{url}" style="display:block;padding:12px 24px;color:#ffffff;'
+        f'font-size:14px;font-weight:600;text-decoration:none;letter-spacing:-0.1px;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">'
+        f'{text}</a>'
+        f'</td></tr></table>'
+    )
+
+
+def _row(label: str, value: str) -> str:
+    # Clean two-column row — label left, value right, no icons
+    return (
+        f'<tr>'
+        f'<td style="padding:10px 14px;font-size:13px;color:#6b7280;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;'
+        f'border-bottom:1px solid #f3f4f6;word-break:break-word;">{label}</td>'
+        f'<td align="right" style="padding:10px 14px;font-size:13px;font-weight:600;'
+        f'color:#111827;white-space:nowrap;border-bottom:1px solid #f3f4f6;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">{value}</td>'
+        f'</tr>'
+    )
+
+
+def _info_table(rows_html: str) -> str:
+    return (
+        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+        f'style="background:#f9fafb;border:1px solid #e5e7eb;'
+        f'border-radius:8px;border-collapse:separate;'
+        f'overflow:hidden;margin:20px 0;">'
+        f'<tbody>{rows_html}</tbody>'
+        f'</table>'
+    )
+
+
+def _h(text: str) -> str:
+    return (
+        f'<h2 style="margin:0 0 10px;font-size:22px;font-weight:700;color:#111827;'
+        f'letter-spacing:-0.4px;line-height:1.25;word-break:break-word;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">'
+        f'{text}</h2>'
+    )
+
+
+def _p(text: str, muted: bool = False) -> str:
+    color = "#9ca3af" if muted else "#4b5563"
+    return (
+        f'<p style="margin:0 0 14px;font-size:14px;color:{color};line-height:1.7;'
+        f'word-break:break-word;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">'
+        f'{text}</p>'
+    )
+
+
+# ── 1. Welcome ─────────────────────────────────────────────────────────────────
+
+def _html_welcome() -> str:
+    body = (
+        _h("Welcome to Neurativo")
+        + _p("Your account is ready. You've been given <strong>5 free credits</strong> to get started — enough to record or import your first lectures.")
+        + _info_table(
+            _row("Live recording", "Real-time")
+            + _row("Import audio / video", "Upload files")
+            + _row("AI notes &amp; flashcards", "Auto-generated")
+            + _row("Q&amp;A", "Ask your lecture anything")
+        )
+        + _p("1 credit = 30 minutes of audio. Credits never expire.", muted=True)
+        + _btn("Open Neurativo", "https://neurativo.vercel.app/app")
+    )
+    return _base_template("AI Lecture Assistant", body)
+
+
+def send_welcome_for_user(user_id: str, name: str = "") -> None:
+    def _task():
+        email = _get_user_email(user_id)
+        if email:
+            html = _render_template('welcome', {'name': name}) or _html_welcome()
+            _send(email, "Welcome to Neurativo — you have 5 free credits", html)
+    threading.Thread(target=_task, daemon=True).start()
+
+
+# ── 2. Plan upgraded ───────────────────────────────────────────────────────────
+
+_PLAN_LABELS = {"student": "Student", "pro": "Pro"}
+_PLAN_FEATURES = {
+    "student": [
+        "Unlimited live recordings (up to 3 hrs each)",
+        "AI summaries, flashcards, quiz &amp; glossary",
+        "Unlimited Q&amp;A over your lectures",
+        "Exam prep &amp; concept maps",
+        "Shareable lecture links",
+        "15 credits added to your balance each month",
+    ],
+    "pro": [
+        "Everything in Student",
+        "Lectures up to 4 hours",
+        "Visual capture (screen &amp; board)",
+        "High-quality PDF export (no watermark)",
+        "Advanced analytics",
+        "30 credits added to your balance each month",
+    ],
+}
+
+
+def _html_plan_upgraded(plan: str) -> str:
+    label = _PLAN_LABELS.get(plan, plan.title())
+    features = _PLAN_FEATURES.get(plan, [])
+    feature_rows = "".join(
+        f'<tr><td style="padding:10px 14px;border-bottom:1px solid #f3f4f6;'
+        f'font-size:13px;color:#4b5563;word-break:break-word;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;">'
+        f'{text}</td></tr>'
+        for text in features
+    )
+    body = (
+        _h(f"You're now on {label}")
+        + _p(f"Your subscription is active. Here's everything included in your <strong>{label}</strong> plan:")
+        + _info_table(feature_rows)
+        + _p("Your monthly credits have been added to your balance.", muted=True)
+        + _btn("Go to your dashboard", "https://neurativo.vercel.app/app")
+        + _p('Manage your subscription from <a href="https://neurativo.vercel.app/profile" style="color:#9ca3af;">your profile</a>.', muted=True)
+    )
+    return _base_template(f"{label} Plan — Active", body)
+
+
+def send_plan_upgraded_for_user(user_id: str, plan: str) -> None:
+    def _task():
+        email = _get_user_email(user_id)
+        if email:
+            label = _PLAN_LABELS.get(plan, plan.title())
+            html = _render_template('plan-upgraded', {'plan': plan}) or _html_plan_upgraded(plan)
+            _send(email, f"You're now on Neurativo {label} — welcome!", html)
+    threading.Thread(target=_task, daemon=True).start()
+
+
+# ── 3. Plan downgraded ─────────────────────────────────────────────────────────
+
+def _html_plan_downgraded() -> str:
+    body = (
+        _h("Your subscription has ended")
+        + _p("Your Neurativo subscription has been cancelled or expired. Your account is now on the <strong>Free plan</strong>.")
+        + _info_table(
+            _row("Your lecture library", "Kept forever")
+            + _row("Read-only access", "Always available")
+            + _row("Existing credits", "Still in your account")
+            + _row("Live recording &amp; imports", "Requires active plan")
+        )
+        + _p("Resubscribe at any time to restore full access instantly.", muted=True)
+        + _btn("Resubscribe", "https://neurativo.vercel.app/app?upgrade=1")
+    )
+    return _base_template("Subscription Ended", body)
+
+
+def send_plan_downgraded_for_user(user_id: str) -> None:
+    def _task():
+        email = _get_user_email(user_id)
+        if email:
+            html = _render_template('plan-downgraded', {}) or _html_plan_downgraded()
+            _send(email, "Your Neurativo subscription has ended", html)
+    threading.Thread(target=_task, daemon=True).start()
+
+
+# ── 4. Payment failed ──────────────────────────────────────────────────────────
+
+def _html_subscription_payment_failed() -> str:
+    body = (
+        _h("Payment failed — action needed")
+        + _p("We couldn't process your latest subscription payment. Your account has been temporarily moved to the <strong>Free plan</strong> until payment is resolved.")
+        + _info_table(
+            _row("Account status", "On hold")
+            + _row("Your lecture library", "Still accessible")
+            + _row("Recording &amp; imports", "Paused until resolved")
+        )
+        + _p("Update your payment method to restore your plan instantly.", muted=True)
+        + _btn("Update payment method", "https://neurativo.vercel.app/profile?billing=1", bg="#dc2626")
+        + _p("If you believe this is an error, just reply to this email.", muted=True)
+    )
+    return _base_template("Payment Issue", body)
+
+
+def send_subscription_payment_failed_for_user(user_id: str) -> None:
+    def _task():
+        email = _get_user_email(user_id)
+        if email:
+            html = _render_template('payment-failed', {}) or _html_subscription_payment_failed()
+            _send(email, "Action needed — Neurativo payment failed", html)
+    threading.Thread(target=_task, daemon=True).start()
+
+
+# ── 5. Credits purchased ───────────────────────────────────────────────────────
+
+def _html_credits_purchased(pack_label: str, credits: int, price_usd: float) -> str:
+    body = (
+        _h(f"Payment confirmed — {credits} credits added")
+        + _p(f"Your <strong>{pack_label}</strong> purchase was successful. Credits have been added to your account.")
+        + _info_table(
+            _row("Credits added", f"+{credits}")
+            + _row("Amount charged", f"${price_usd:.2f} USD")
+            + _row("Pack", pack_label)
+        )
+        + _p("1 credit = 30 minutes of audio. Credits never expire.", muted=True)
+        + _btn("Start a new lecture", "https://neurativo.vercel.app/app")
+    )
+    return _base_template("Purchase Confirmed", body)
+
+
+def send_credits_purchased_for_user(user_id: str, pack_label: str, credits: int, price_usd: float) -> None:
+    def _task():
+        email = _get_user_email(user_id)
+        if email:
+            html = (_render_template('credits-purchased', {'packLabel': pack_label, 'credits': credits, 'priceUsd': price_usd})
+                    or _html_credits_purchased(pack_label, credits, price_usd))
+            _send(email, f"Neurativo — {credits} credits added to your account", html)
+    threading.Thread(target=_task, daemon=True).start()
+
+
+# ── 6. Monthly credits refreshed ──────────────────────────────────────────────
+
+def _html_credits_refreshed(plan: str, credits: int) -> str:
+    label = _PLAN_LABELS.get(plan, plan.title())
+    body = (
+        _h(f"Your {credits} monthly credits are ready")
+        + _p(f"Your <strong>{label}</strong> subscription has renewed and your monthly credits have been added to your balance.")
+        + _info_table(
+            _row("Credits added", f"+{credits}")
+            + _row("Plan", label)
+            + _row("Next refresh", "Next billing cycle")
+        )
+        + _btn("Open Neurativo", "https://neurativo.vercel.app/app")
+    )
+    return _base_template(f"{label} Plan — Renewed", body)
+
+
+def send_credits_refreshed_for_user(user_id: str, plan: str, credits: int) -> None:
+    def _task():
+        email = _get_user_email(user_id)
+        if email:
+            label = _PLAN_LABELS.get(plan, plan.title())
+            html = (_render_template('credits-refreshed', {'plan': plan, 'credits': credits})
+                    or _html_credits_refreshed(plan, credits))
+            _send(email, f"Neurativo {label} renewed — {credits} credits added", html)
+    threading.Thread(target=_task, daemon=True).start()
+
+
+# ── 7. Lecture import ready ────────────────────────────────────────────────────
+
+def _html_lecture_ready(title: str, lecture_url: str) -> str:
+    display = title or "Your lecture"
+    body = (
+        _h("Your lecture is ready")
+        + _p(f"We've finished processing <strong>{display}</strong>. Your study materials are all ready to go.")
+        + _info_table(
+            _row("AI summary", "Ready")
+            + _row("Flashcards", "Generated")
+            + _row("Quiz", "Ready")
+            + _row("Glossary", "Generated")
+        )
+        + _btn("View lecture", lecture_url)
+    )
+    return _base_template("Lecture Processed", body)
+
+
+def send_lecture_ready_for_job(lecture_id: str, user_id: str) -> None:
+    """Fetch lecture title and user email, then send. Fire-and-forget."""
+    def _task():
+        email = _get_user_email(user_id)
+        if not email:
+            return
+        title = ""
+        try:
+            from app.services.supabase_service import _fresh_db
+            resp = _fresh_db().table("lectures").select("title").eq("id", lecture_id).limit(1).execute()
+            if resp.data:
+                title = resp.data[0].get("title") or ""
+        except Exception as e:
+            print(f"[email] lecture title fetch error: {e}")
+        lecture_url = f"https://neurativo.vercel.app/lecture/{lecture_id}"
+        subject = f"Neurativo — \"{title or 'Your lecture'}\" is ready"
+        html = (_render_template('lecture-ready', {'title': title, 'lectureUrl': lecture_url})
+                or _html_lecture_ready(title, lecture_url))
+        _send(email, subject, html)
+    threading.Thread(target=_task, daemon=True).start()
+
+
+# ── 8. Low credits warning ─────────────────────────────────────────────────────
+
+def _html_low_credits(balance: int) -> str:
+    credit_word = "credit" if balance == 1 else "credits"
+    body = (
+        _h("You're running low on credits")
+        + _p(f"You have <strong>{balance} {credit_word} remaining</strong>. Each credit covers 30 minutes of recording or import.")
+        + _info_table(
+            _row("Credits remaining", str(balance))
+            + _row("Recording time left", f"~{balance * 30} min")
+        )
+        + _p("Top up now to keep recording without interruption. Packs start at $4.99.", muted=True)
+        + _btn("Get more credits", "https://neurativo.vercel.app/credits")
+    )
+    return _base_template("Low Credits", body)
+
+
+def send_low_credits_for_user(user_id: str, balance: int) -> None:
+    def _task():
+        email = _get_user_email(user_id)
+        if email:
+            credit_word = "credit" if balance == 1 else "credits"
+            html = _render_template('low-credits', {'balance': balance}) or _html_low_credits(balance)
+            _send(email, f"Neurativo — only {balance} {credit_word} left", html)
+    threading.Thread(target=_task, daemon=True).start()

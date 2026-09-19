@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Allow: /share/
+Disallow: /app
+Disallow: /record
+Disallow: /lecture/
+Disallow: /profile
+Disallow: /credits
+Disallow: /admin
+Disallow: /admin/
+
+Sitemap: https://neurativo.vercel.app/sitemap.xml

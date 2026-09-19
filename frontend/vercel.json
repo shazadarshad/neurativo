@@ -1,0 +1,12 @@
+{
+  "routes": [
+    { "src": "/features", "dest": "/features/index.html" },
+    { "src": "/pricing",  "dest": "/pricing/index.html" },
+    { "src": "/faq",      "dest": "/faq/index.html" },
+    { "src": "/about",    "dest": "/about/index.html" },
+    { "src": "/terms",    "dest": "/terms/index.html" },
+    { "src": "/privacy",  "dest": "/privacy/index.html" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}

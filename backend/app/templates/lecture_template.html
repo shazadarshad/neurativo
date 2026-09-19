@@ -1,0 +1,2358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }} – Neurativo</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- display=block: Chrome waits for fonts before rendering (prevents mid-swap PDF snapshot scrambling) -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono:wght@400;500;600&display=block">
+
+    <style>
+        /* ═══════════════════════════════════════════════════════════
+           NEURATIVO LECTURE REPORT — Design System v2
+           Nature journal × Notion AI aesthetic
+           Fonts: Inter (UI/body) · Lora (display/serif) · JetBrains Mono (code/eq)
+           Print-faithful: greyscale-safe hierarchy via weight + rule + scale
+        ═══════════════════════════════════════════════════════════ */
+
+        /* ─── 1. TOKENS ─────────────────────────────────────────── */
+        :root {
+            --ink:    #0d1117;
+            --ink-2:  #1f2937;
+            --ink-3:  #4b5563;
+            --ink-4:  #9ca3af;
+            --ink-5:  #d1d5db;
+            --ink-6:  #e5e7eb;
+            --ink-7:  #f5f5f3;
+            --paper:  #ffffff;
+            --paper-2:#faf9f6;
+
+            /* Accent — injected via body style attribute */
+            --accent:      #2563eb;
+            --accent-dark: color-mix(in oklab, var(--accent) 70%, #000);
+            --accent-text: color-mix(in oklab, var(--accent) 82%, #000 18%);
+            --accent-lt:   color-mix(in oklab, var(--accent) 7%,  #fff 93%);
+            --accent-mid:  color-mix(in oklab, var(--accent) 22%, #fff 78%);
+            --accent-rule: color-mix(in oklab, var(--accent) 45%, #fff 55%);
+
+            --serif: 'Lora', 'Iowan Old Style', Georgia, serif;
+            --sans:  'Inter', -apple-system, 'Segoe UI', sans-serif;
+            --mono:  'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+            --rule:     0.5pt solid var(--ink-5);
+            --rule-2:   0.75pt solid var(--ink-4);
+            --hairline: 0.25pt solid var(--ink-6);
+            --radius:   5px;
+            --radius-lg: 10px;
+        }
+
+        /* ─── 2. PAGE / RESET ───────────────────────────────────── */
+        @page {
+            size: A4;
+            margin: 18mm 16mm 20mm;
+            @bottom-right {
+                content: counter(page) " / " counter(pages);
+                font-family: 'Inter', sans-serif;
+                font-size: 7pt;
+                color: #9ca3af;
+                letter-spacing: 0;
+            }
+        }
+        @page :first { margin-top: 12mm; }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            letter-spacing: 0 !important;
+            word-spacing: 0 !important;
+            font-variant-ligatures: none !important;
+            -webkit-font-variant-ligatures: none !important;
+            font-feature-settings: "liga" 0, "calt" 0 !important;
+            text-rendering: geometricPrecision;
+        }
+        html, body { margin: 0; padding: 0; }
+        body {
+            font-family: var(--sans);
+            font-size: 10.25pt;
+            line-height: 1.55;
+            color: var(--ink-2);
+            background: var(--paper);
+            /* Disable ligatures & zero letter/word spacing: prevents Chromium PDF
+               text-layer interleaving when glyphs are subsetted with ligature encodings */
+            font-variant-ligatures: none !important;
+            -webkit-font-variant-ligatures: none !important;
+            font-feature-settings: "liga" 0, "calt" 0 !important;
+            letter-spacing: 0 !important;
+            word-spacing: 0 !important;
+            /* geometricPrecision + no subpixel smoothing = clean single-glyph advances */
+            text-rendering: geometricPrecision;
+            -webkit-font-smoothing: none;
+        }
+        p {
+            margin: 0 0 0.65em;
+            orphans: 3;
+            widows: 3;
+            /* Explicit reset on p so any inherited value is never non-zero */
+            letter-spacing: 0 !important;
+            word-spacing: 0 !important;
+        }
+        strong { color: var(--ink); font-weight: 600; }
+        em { font-style: italic; }
+
+        /* ─── 3. TYPE SCALE ─────────────────────────────────────── */
+        h1, h2, h3, h4 {
+            font-family: var(--serif);
+            color: var(--ink);
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            line-height: 1.2;
+            margin: 0;
+        }
+        h1 { font-size: 40pt; font-weight: 500; letter-spacing: -0.025em; }
+        h2 { font-size: 16pt; }
+        h3 { font-size: 12pt; }
+        h4 {
+            font-size: 10.5pt;
+            font-family: var(--sans);
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: var(--ink-2);
+        }
+        .eyebrow-label {
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.6px;
+            color: var(--accent-text);
+        }
+        .eyebrow-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 9mm;
+            margin-bottom: 2mm;
+        }
+        .eyebrow-rule {
+            border: none;
+            border-top: var(--hairline);
+            margin: 0 0 5mm;
+        }
+        .pb-before { page-break-before: always; }
+
+        /* ─── 4. COVER ──────────────────────────────────────────── */
+        .cover {
+            page-break-after: always;
+            height: 257mm;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            padding: 4mm 0;
+        }
+
+        /* Top bar: wordmark + report type */
+        .cover-mark {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1.25pt solid var(--ink-5);
+            padding-bottom: 7mm;
+        }
+        .cover-mark .wordmark {
+            font-family: var(--serif);
+            font-size: 16.5pt;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--ink);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .cover-mark .wordmark::before {
+            content: "";
+            width: 11px;
+            height: 11px;
+            background: var(--accent);
+            display: inline-block;
+            transform: rotate(45deg);
+            flex-shrink: 0;
+        }
+        .cover-mark .label {
+            font-family: var(--sans);
+            font-size: 7pt;
+            font-weight: 600;
+            letter-spacing: 0.24em;
+            text-transform: uppercase;
+            color: var(--ink-4);
+        }
+        .cover-mark .label .sep {
+            display: inline-block;
+            width: 18px;
+            border-top: var(--rule);
+            margin: 0 10px 3px;
+            vertical-align: middle;
+        }
+
+        /* Middle: accent bar + meta + title + deck + stat strip */
+        .cover-body {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            padding: 0 6mm 4mm;
+        }
+        .cover-accent {
+            width: 100%;
+            height: 1.5pt;
+            background: linear-gradient(90deg, var(--accent) 0%, var(--accent-rule) 75%, transparent 100%);
+            margin: 0 0 8mm;
+            flex: 0 0 auto;
+            border-radius: 1pt;
+        }
+        .cover-meta {
+            font-family: var(--sans);
+            font-size: 7.5pt;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--ink-4);
+            margin-bottom: 9mm;
+            display: flex;
+            gap: 12mm;
+            align-items: baseline;
+            padding-bottom: 4mm;
+            border-bottom: var(--hairline);
+        }
+        .cover-meta b { color: var(--ink-2); font-weight: 700; }
+        .cover-title {
+            font-family: var(--serif);
+            font-size: 42pt;
+            font-weight: 600;
+            line-height: 1.07;
+            letter-spacing: -0.03em;
+            color: var(--ink);
+            max-width: 17cm;
+            margin: 0 0 9mm;
+        }
+        .cover-deck {
+            font-family: var(--serif);
+            font-style: italic;
+            font-size: 12.5pt;
+            color: var(--ink-3);
+            line-height: 1.5;
+            max-width: 14cm;
+            margin: 0 0 13mm;
+            font-weight: 400;
+            overflow: hidden;
+        }
+
+        /* Horizontal 4-tile stat strip */
+        .cover-strip {
+            border-top: 1.5pt solid var(--ink-5);
+            border-bottom: var(--hairline);
+            background: var(--paper-2);
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+        }
+        .cover-strip .tile {
+            padding: 7mm 6mm 6mm;
+            border-right: var(--hairline);
+            display: grid;
+            gap: 2.5mm;
+            position: relative;
+        }
+        .cover-strip .tile:last-child { border-right: 0; }
+        .cover-strip .tile::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2pt;
+            background: var(--accent);
+            opacity: 0.18;
+        }
+        .cover-strip .tile:first-child::before { opacity: 0.5; }
+        .cover-strip .tile .k {
+            font-family: var(--sans);
+            font-size: 6.5pt;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--ink-4);
+            font-weight: 700;
+        }
+        .cover-strip .tile .v {
+            font-family: var(--serif);
+            font-size: 26pt;
+            font-weight: 600;
+            color: var(--ink);
+            line-height: 1;
+            letter-spacing: -0.02em;
+        }
+        .cover-strip .tile .v sup {
+            font-size: 11pt;
+            color: var(--ink-4);
+            font-weight: 400;
+            margin-left: 2px;
+        }
+        .cover-strip .tile .u {
+            font-family: var(--sans);
+            font-size: 7pt;
+            color: var(--ink-4);
+        }
+
+        /* Footer: brand + issue info */
+        .cover-foot {
+            border-top: 1.25pt solid var(--ink-5);
+            padding-top: 6mm;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 10mm;
+            font-family: var(--sans);
+            font-size: 7pt;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--ink-4);
+        }
+        .cover-foot .brand {
+            font-family: var(--serif);
+            font-style: italic;
+            font-size: 11pt;
+            color: var(--ink-3);
+            letter-spacing: 0;
+            text-transform: none;
+            font-weight: 500;
+        }
+        .cover-foot .issue { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+        /* ─── 5. TABLE OF CONTENTS ──────────────────────────────── */
+        .toc-page { padding-top: 4mm; }
+        .toc-h { font-family: var(--serif); font-size: 22pt; font-weight: 600; color: var(--ink); margin: 0 0 7mm; letter-spacing: -0.015em; }
+        .toc-row { display: flex; align-items: baseline; gap: 4px; margin-bottom: 2.8mm; page-break-inside: avoid; }
+        .toc-row.depth-1 { margin-left: 10mm; margin-bottom: 1.8mm; }
+        .toc-num { font-family: var(--sans); font-style: normal; font-size: 7.5pt; font-weight: 700; color: var(--accent-text); min-width: 26px; letter-spacing: 0.04em; }
+        .toc-row.depth-1 .toc-num { min-width: 32px; font-size: 7pt; color: var(--ink-4); }
+        .toc-sec-title { font-family: var(--serif); font-size: 11pt; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; font-weight: 500; }
+        .toc-row.depth-1 .toc-sec-title { font-family: var(--sans); font-size: 8.8pt; color: var(--ink-3); font-weight: 400; }
+        .toc-dots { flex: 1; border-bottom: 0.4pt dotted var(--ink-5); margin: 0 5px 3px; }
+        .toc-page-num { font-size: 7.5pt; color: var(--ink-4); font-family: var(--mono); white-space: nowrap; }
+
+        .preview-page { padding-top: 4mm; }
+        .preview-hero {
+            display: grid;
+            grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
+            gap: 8mm;
+            align-items: start;
+            margin-bottom: 7mm;
+        }
+        .preview-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--accent-text);
+            margin-bottom: 3mm;
+        }
+        .preview-kicker::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            transform: rotate(45deg);
+            display: inline-block;
+        }
+        .preview-title {
+            font-family: var(--serif);
+            font-size: 24pt;
+            line-height: 1.15;
+            margin-bottom: 3mm;
+        }
+        .preview-copy {
+            font-size: 10pt;
+            line-height: 1.75;
+            color: var(--ink-2);
+            margin: 0;
+        }
+        .preview-upgrade-box {
+            border: 1px solid var(--accent-mid);
+            background: linear-gradient(180deg, var(--accent-lt), #ffffff 72%);
+            border-radius: 6px;
+            padding: 5mm;
+        }
+        .preview-upgrade-box .label {
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--accent-text);
+            margin-bottom: 2.5mm;
+        }
+        .preview-upgrade-box .value {
+            font-family: var(--serif);
+            font-size: 16pt;
+            color: var(--ink);
+            margin-bottom: 2mm;
+        }
+        .preview-upgrade-box .sub {
+            font-size: 8.75pt;
+            color: var(--ink-3);
+            line-height: 1.6;
+        }
+        .preview-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6mm;
+            margin-bottom: 7mm;
+        }
+        .preview-panel {
+            border: var(--hairline);
+            border-radius: 6px;
+            padding: 5mm;
+            background: #fff;
+        }
+        .preview-panel h3 {
+            font-family: var(--sans);
+            font-size: 9pt;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ink-2);
+            margin-bottom: 3mm;
+        }
+        .preview-list {
+            margin: 0;
+            padding-left: 4mm;
+            color: var(--ink-2);
+        }
+        .preview-list li {
+            margin-bottom: 2.2mm;
+            line-height: 1.55;
+        }
+        .preview-section-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6mm;
+        }
+        .preview-section-card {
+            border-top: 2px solid var(--accent-rule);
+            padding-top: 3.5mm;
+        }
+        .preview-section-card .index {
+            font-size: 7pt;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            color: var(--ink-4);
+            margin-bottom: 2mm;
+        }
+        .preview-section-card .title {
+            font-family: var(--serif);
+            font-size: 13pt;
+            color: var(--ink);
+            margin-bottom: 2mm;
+        }
+        .preview-section-card p {
+            font-size: 9.4pt;
+            line-height: 1.7;
+            color: var(--ink-2);
+            margin: 0;
+        }
+
+        /* ─── 6. EXECUTIVE SUMMARY ──────────────────────────────── */
+        .exec-card {
+            background: linear-gradient(160deg, var(--accent-lt) 0%, var(--paper-2) 55%, #fff 100%);
+            border-radius: 10px;
+            padding: 6.5mm 8mm;
+            margin-bottom: 8mm;
+            border-top: 2pt solid var(--accent);
+            border-left: 0.5pt solid var(--accent-mid);
+            border-right: 0.5pt solid var(--accent-mid);
+            border-bottom: 0.5pt solid var(--accent-mid);
+        }
+        .exec-card p { margin: 0 0 4mm; font-size: 10.5pt; line-height: 1.82; color: var(--ink-2); }
+        .exec-card p:last-child { margin-bottom: 0; }
+        .exec-card .drop-cap::first-letter {
+            float: left;
+            font-family: var(--serif);
+            font-size: 3.4em;
+            line-height: 0.80;
+            padding-right: 6px;
+            padding-top: 3px;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        /* Key stats row (below exec summary) */
+        .stat-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+            gap: 0;
+            margin: 4mm 0 8mm;
+            border-top: 1.25pt solid var(--ink-5);
+            border-bottom: 1.25pt solid var(--ink-5);
+            background: var(--paper-2);
+        }
+        .stat-row .stat {
+            padding: 5mm 6mm;
+            border-right: var(--hairline);
+            display: flex;
+            align-items: baseline;
+            gap: 4mm;
+        }
+        .stat-row .stat:last-child { border-right: 0; }
+        .stat-row .stat .num {
+            font-family: var(--serif);
+            font-size: 24pt;
+            font-weight: 600;
+            color: var(--ink);
+            letter-spacing: -0.025em;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .stat-row .stat .num small { font-size: 10pt; color: var(--ink-4); margin-left: 2px; font-weight: 400; }
+        .stat-row .stat .lbl { font-family: var(--sans); font-size: 8.25pt; color: var(--ink-3); line-height: 1.38; }
+        .stat-row .stat .lbl b { display: block; color: var(--ink-2); font-weight: 700; font-size: 9pt; margin-bottom: 1pt; }
+        .revision-focus-strip {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 3mm;
+            margin: 0 0 7mm;
+        }
+        .revision-focus-card {
+            border-top: 2pt solid var(--accent);
+            background: linear-gradient(160deg, var(--accent-lt), #fff 70%);
+            padding: 3.5mm 4mm;
+            border-radius: 7px;
+            border-left: 0.4pt solid var(--accent-mid);
+            border-right: 0.4pt solid var(--accent-mid);
+            border-bottom: 0.4pt solid var(--accent-mid);
+        }
+        .revision-focus-card .label {
+            font-size: 6.8pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--accent-text);
+            margin-bottom: 1mm;
+        }
+        .revision-focus-card .concept {
+            font-family: var(--serif);
+            font-size: 10.5pt;
+            color: var(--ink);
+            margin-bottom: 0.8mm;
+        }
+        .revision-focus-card .reason {
+            font-size: 8.35pt;
+            color: var(--ink-3);
+            line-height: 1.45;
+        }
+
+        /* ─── 7. SECTION CARD ───────────────────────────────────── */
+        .section {
+            position: relative;
+            padding: 8mm 0 5mm;
+            border-top: 1.5pt solid var(--accent-rule);
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+        .section + .section {
+            padding-top: 7mm;
+            page-break-before: always;
+            break-before: page;
+        }
+
+        /* 3-column header: §N | title+sub | watermark space */
+        .section-head {
+            display: grid;
+            grid-template-columns: 12mm 1fr 22mm;
+            gap: 0 6mm;
+            align-items: baseline;
+            margin-bottom: 2.2mm;
+        }
+        .section-spacer { grid-column: 3; }
+        .section-num {
+            font-family: var(--sans);
+            font-size: 7.5pt;
+            font-style: normal;
+            color: var(--accent-text);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: 0.12em;
+            padding: 2pt 6pt;
+            white-space: nowrap;
+            font-weight: 700;
+            text-transform: uppercase;
+            background: var(--accent-lt);
+            border: 0.4pt solid var(--accent-mid);
+            border-radius: 3pt;
+            display: inline-block;
+            line-height: 1.5;
+            margin-top: 4pt;
+            align-self: flex-start;
+        }
+        .section-title {
+            font-family: var(--serif);
+            font-size: 18pt;
+            font-weight: 600;
+            color: var(--ink);
+            letter-spacing: -0.018em;
+            line-height: 1.18;
+        }
+        .chapter-kicker {
+            font-family: var(--sans);
+            font-size: 6.8pt;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+            color: var(--ink-4);
+            margin-bottom: 1mm;
+        }
+        .section-sub {
+            grid-column: 2;
+            font-family: var(--serif);
+            font-style: italic;
+            color: var(--ink-3);
+            font-size: 10.5pt;
+            margin-top: 2mm;
+        }
+
+        /* Large faint watermark numeral */
+        .section-watermark {
+            position: absolute;
+            top: 6mm;
+            right: 0;
+            font-family: var(--sans) !important;
+            font-size: 64pt;
+            font-weight: 700;
+            line-height: 1;
+            color: color-mix(in oklab, var(--accent) 5%, var(--ink-7) 95%);
+            letter-spacing: -0.05em;
+            pointer-events: none;
+            z-index: 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .section-body { position: relative; z-index: 1; }
+        .section.compact .section-body { font-size: 9.25pt; }
+        .section.compact p { margin-bottom: 0.45em; }
+        .section.dense .section-body { line-height: 1.48; }
+        .subtopics-label {
+            position: relative;
+            z-index: 2;
+            font-size: 6.8pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--ink-4);
+            margin: 0 0 1.1mm;
+        }
+        .subtopics-row {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 0 0 2.2mm;
+            overflow: hidden;
+        }
+        .subtopic-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #f5f1e8;
+            color: var(--ink-3);
+            font-size: 7.5pt;
+            border: 0.5px solid #e7dfd2;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .subtopic-stack { margin: 2.6mm 0 1.4mm; }
+        .subtopic-item {
+            padding: 2.6mm 0;
+            border-top: 0.5pt solid #ece7de;
+        }
+        .subtopic-item:first-child { border-top: none; padding-top: 0; }
+        .subtopic-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 1mm;
+        }
+        .subtopic-title {
+            font-family: var(--serif);
+            font-size: 10pt;
+            font-weight: 600;
+            color: var(--ink);
+        }
+        .subtopic-source {
+            font-size: 6.9pt;
+            color: var(--ink-4);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .subtopic-overview {
+            font-size: 8.7pt;
+            color: var(--ink-2);
+            line-height: 1.5;
+            margin-bottom: 1.2mm;
+        }
+        .subtopic-inline-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 10px;
+            font-size: 8pt;
+            color: var(--ink-3);
+            line-height: 1.45;
+        }
+        .subtopic-inline-list strong {
+            color: var(--ink);
+            font-weight: 600;
+            margin-right: 3px;
+        }
+
+        /* Lead sentence (when no analogy) */
+        .ls-lead {
+            font-family: var(--sans);
+            font-size: 11.5pt;
+            font-weight: 500;
+            color: var(--ink);
+            margin: 0 0 2.2mm;
+            line-height: 1.45;
+        }
+
+        /* Section prose */
+        .section-body p { font-size: 9.2pt; color: var(--ink-3); margin: 0 0 1.8mm; line-height: 1.58; }
+
+        /* Bullet list */
+        .section-bullets { list-style: none; padding: 0; margin: 3mm 0 0; }
+        .section-bullets li {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            margin-bottom: 2.2mm;
+            font-size: 9.5pt;
+            color: var(--ink-2);
+            line-height: 1.62;
+        }
+        .section-bullets li::before {
+            content: "▸";
+            color: var(--accent);
+            font-size: 8.5pt;
+            flex-shrink: 0;
+            margin-top: 2px;
+            opacity: 0.7;
+        }
+
+        /* Concept pills */
+        .concepts-wrap { margin: 1.8mm 0 2.2mm; }
+        .concepts-label {
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--ink-4);
+            margin-bottom: 1.2mm;
+        }
+        .concepts-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+        .concept-pill {
+            background: var(--accent-lt);
+            color: var(--accent-text);
+            border: 0.5px solid var(--accent-mid);
+            border-radius: 20px;
+            padding: 1.5px 8px;
+            font-size: 8.1pt;
+            font-weight: 500;
+        }
+
+        /* Examples */
+        .examples-wrap {
+            border-left: 2px solid #5dcaa5;
+            padding-left: 7px;
+            margin-bottom: 0;
+        }
+        .examples-label {
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--ink-4);
+            margin-bottom: 1.2mm;
+        }
+        .example-row { font-size: 8.7pt; color: #334155; margin-bottom: 1.1mm; line-height: 1.45; }
+        .example-arrow { color: #1d9e75; font-weight: 600; margin-right: 4px; }
+
+        /* Code block */
+        .code-block {
+            margin: 3mm 0 2mm;
+            border: 0.5pt solid #e5e7eb;
+            border-radius: 5px;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 8.5pt;
+        }
+        .code-lang {
+            background: #1e293b;
+            color: #94a3b8;
+            font-size: 7pt;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            padding: 1.5mm 3mm;
+        }
+        .code-block pre {
+            margin: 0;
+            display: flex;
+            background: #f8fafc;
+        }
+        .code-block .gutter {
+            padding: 2mm 2.5mm;
+            background: #f1f5f9;
+            color: #94a3b8;
+            font-size: 7.5pt;
+            line-height: 1.6;
+            text-align: right;
+            user-select: none;
+            min-width: 6mm;
+        }
+        .code-block .src {
+            padding: 2mm 3mm;
+            color: #0f172a;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        /* Analogy two-column box */
+        .analogy-box {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            margin-bottom: 4mm;
+            border: var(--hairline);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .analogy-left  { padding: 4mm 5mm; background: var(--paper-2); border-right: var(--hairline); }
+        .analogy-right { padding: 4mm 5mm; background: #f0fdf4; }
+        .analogy-col-label {
+            font-size: 6.5pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--ink-4);
+            margin-bottom: 2mm;
+        }
+        .analogy-right .analogy-col-label { color: #059669; }
+        .analogy-text { font-size: 9pt; color: var(--ink-2); line-height: 1.6; }
+        .analogy-right .analogy-text { color: #134e4a; }
+
+        /* Mistake + Remember two-column box */
+        .mr-box {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            margin-top: 4mm;
+            border: 0.5pt solid #fde68a;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .mr-mistake { padding: 4mm 5mm; background: #fffbeb; border-right: 0.5pt solid #fde68a; }
+        .mr-remember { padding: 4mm 5mm; background: #f0fdf4; }
+        .mr-label {
+            font-size: 6.5pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 1.5mm;
+        }
+        .mr-mistake .mr-label  { color: #b45309; }
+        .mr-remember .mr-label { color: #059669; }
+        .mr-text { font-size: 8.5pt; line-height: 1.6; }
+        .mr-mistake .mr-text  { color: #78350f; }
+        .mr-remember .mr-text { color: #134e4a; }
+
+        /* Notes lines at bottom of each section */
+        .section-notes { margin-top: 2.5mm; padding-top: 2mm; border-top: var(--hairline); }
+        .section-source {
+            margin-top: 2.5mm;
+            font-size: 7.4pt;
+            color: var(--ink-4);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .section-source strong {
+            color: var(--ink-3);
+            font-weight: 600;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+        .edu-box {
+            margin-top: 0;
+            padding: 2.7mm 3mm;
+            border: var(--hairline);
+            border-radius: 6px;
+            background: var(--paper-2);
+            display: inline-block;
+            width: calc(50% - 2mm);
+            margin-right: 2mm;
+            margin-bottom: 2mm;
+            vertical-align: top;
+        }
+        .edu-box-label {
+            font-size: 6.8pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--ink-4);
+            margin-bottom: 1.3mm;
+        }
+        .edu-box-list { margin: 0; padding-left: 4mm; }
+        .edu-box-list li { margin-bottom: 1.1mm; font-size: 8.5pt; color: var(--ink-2); line-height: 1.45; }
+        .edu-box.definition { background: #f9f7f2; }
+        .edu-box.distinction { background: #f8fafc; }
+        .edu-box.exam-trap { background: #fff9e7; border-color: #f2d48b; }
+        .versus-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2mm;
+            margin: 2.5mm 0;
+            page-break-inside: avoid;
+        }
+        .versus-cell {
+            border: var(--hairline);
+            border-radius: 6px;
+            padding: 2.6mm 3mm;
+            background: #f8fafc;
+        }
+        .versus-label {
+            font-size: 6.8pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--ink-4);
+            margin-bottom: 1mm;
+        }
+        .versus-text {
+            font-size: 8.7pt;
+            color: var(--ink-2);
+            line-height: 1.45;
+        }
+        .study-inline-grid {
+            display: grid;
+            grid-template-columns: 0.78fr 1.8fr;
+            gap: 1.6mm 3mm;
+            margin: 2.6mm 0 2mm;
+            padding: 3mm 3.2mm;
+            border-top: var(--hairline);
+            border-bottom: var(--hairline);
+            background: linear-gradient(180deg, #fff, var(--paper-2));
+        }
+        .study-inline-grid .label {
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.13em;
+            color: var(--ink-4);
+        }
+        .study-inline-grid .value {
+            font-size: 8.65pt;
+            color: var(--ink-2);
+            line-height: 1.42;
+        }
+        .study-inline-grid .value.trap {
+            color: var(--accent-dark);
+            font-weight: 600;
+        }
+        .mr-box { width: 100%; }
+        .trust-note {
+            font-size: 8.5pt;
+            color: var(--ink-3);
+            line-height: 1.55;
+            margin: 0 0 2mm;
+        }
+        .notes-label {
+            font-size: 6.5pt;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--ink-5);
+            margin-bottom: 2mm;
+        }
+        .notes-lines {
+            height: 7mm;
+            background-image: repeating-linear-gradient(
+                to bottom,
+                transparent, transparent 3.5mm,
+                var(--ink-6) 3.5mm, var(--ink-6) 4mm
+            );
+        }
+        @media print {
+            .edu-box {
+                width: calc(50% - 2mm);
+            }
+        }
+
+        /* ─── 8. EQUATION BLOCK ─────────────────────────────────── */
+        .equation-block {
+            display: grid;
+            grid-template-columns: 5em 1fr 5em;
+            align-items: center;
+            margin: 5mm 0;
+            padding: 5mm 0;
+            background: var(--ink-7);
+            border-top: var(--rule);
+            border-bottom: var(--rule);
+            page-break-inside: avoid;
+        }
+        .equation-block .eq-tag {
+            font-family: var(--mono);
+            font-size: 9pt;
+            color: var(--ink-3);
+            text-align: center;
+        }
+        .equation-block .eq-body {
+            font-family: var(--mono);
+            font-size: 11.5pt;
+            text-align: center;
+            color: var(--ink);
+            letter-spacing: 0.01em;
+            line-height: 1.5;
+        }
+        .equation-block .eq-body i,
+        .equation-block .eq-body var { font-family: var(--serif); font-style: italic; }
+        .equation-block .eq-body sup,
+        .equation-block .eq-body sub  { font-family: var(--mono); font-size: 0.75em; }
+
+        /* Inline equation reference */
+        .eq-inline {
+            font-family: var(--mono);
+            font-size: 0.92em;
+            background: var(--accent-lt);
+            color: var(--accent-text);
+            padding: 0.5pt 4pt;
+            border-radius: 2px;
+            border: 0.4pt solid var(--accent-mid);
+            white-space: nowrap;
+        }
+
+        /* ─── 9. CODE BLOCK ─────────────────────────────────────── */
+        .code-block {
+            position: relative;
+            margin: 5mm 0;
+            background: #1e1e2e;
+            color: #e4e4ef;
+            font-family: var(--mono);
+            font-size: 8.75pt;
+            line-height: 1.55;
+            border-radius: var(--radius);
+            overflow: hidden;
+            page-break-inside: avoid;
+        }
+        .code-block .code-lang {
+            position: absolute;
+            top: 6pt; right: 8pt;
+            font-family: var(--sans);
+            font-size: 7pt;
+            font-weight: 600;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: #9aa0b4;
+            background: rgba(255,255,255,0.06);
+            padding: 2pt 6pt;
+            border-radius: 99px;
+            border: 0.4pt solid rgba(255,255,255,0.12);
+        }
+        .code-block pre {
+            margin: 0;
+            padding: 8pt 10pt 8pt 0;
+            display: grid;
+            grid-template-columns: 3.2em 1fr;
+        }
+        .code-block .gutter {
+            text-align: right;
+            padding-right: 10pt;
+            color: #5a5f7a;
+            border-right: 0.5pt solid rgba(255,255,255,0.08);
+            user-select: none;
+            font-variant-numeric: tabular-nums;
+            font-size: 8pt;
+        }
+        .code-block .src { padding-left: 12pt; white-space: pre; }
+        /* CSS-only token classes */
+        .tk-kw  { color: #c4a4ff; font-weight: 500; }
+        .tk-fn  { color: #8ec5ff; }
+        .tk-str { color: #a6e3a1; }
+        .tk-num { color: #ffd29a; }
+        .tk-com { color: #6b7090; font-style: italic; }
+        .tk-op  { color: #f5c2e7; }
+        .tk-cls { color: #ffd29a; }
+
+        /* ─── 10. THEOREM / LEMMA ───────────────────────────────── */
+        .theorem {
+            position: relative;
+            margin: 5mm 0;
+            padding: 5mm 6mm 4mm;
+            background: var(--paper);
+            border-top: 1.25pt double var(--ink-3);
+            border-bottom: 1.25pt double var(--ink-3);
+            page-break-inside: avoid;
+        }
+        .theorem-head { display: flex; align-items: baseline; gap: 10pt; margin-bottom: 3mm; flex-wrap: wrap; }
+        .theorem-head .kind {
+            font-family: var(--sans);
+            font-size: 7.5pt;
+            font-weight: 700;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--ink);
+            white-space: nowrap;
+        }
+        .theorem-head .name {
+            font-family: var(--serif);
+            font-style: italic;
+            font-size: 10.5pt;
+            color: var(--ink-3);
+        }
+        .theorem-statement {
+            font-family: var(--serif);
+            font-style: italic;
+            font-size: 11pt;
+            color: var(--ink);
+            line-height: 1.5;
+            margin: 0 0 3mm;
+        }
+        .theorem-proof { font-family: var(--sans); font-size: 10pt; color: var(--ink-2); }
+        .theorem-proof::before {
+            content: "Proof.\00a0";
+            font-variant: small-caps;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            color: var(--ink);
+        }
+        .theorem-proof::after { content: "\00a0\25A0"; font-size: 0.85em; color: var(--ink); margin-left: 2pt; }
+        .theorem.is-lemma { border-top: var(--rule); border-bottom: var(--rule); background: var(--ink-7); }
+        .theorem.is-lemma .theorem-statement { font-size: 10.5pt; }
+
+        /* ─── 11. CASE STUDY ────────────────────────────────────── */
+        .case {
+            margin: 5mm 0 5mm 6mm;
+            padding: 4mm 6mm;
+            background: var(--paper-2);
+            border-left: 0.75pt solid var(--ink-4);
+            position: relative;
+            page-break-inside: avoid;
+        }
+        .case::before {
+            content: "Case";
+            font-family: var(--sans);
+            font-size: 7pt;
+            font-weight: 700;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--ink-3);
+            position: absolute;
+            top: -3pt; left: 6mm;
+            background: var(--paper);
+            padding: 0 6pt;
+        }
+        .case .case-eyebrow { font-family: var(--sans); font-size: 7.5pt; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 2mm; }
+        .case .case-title   { font-family: var(--serif); font-size: 11.5pt; font-weight: 600; color: var(--ink); margin: 0 0 2mm; font-style: italic; }
+        .case p { font-size: 9.75pt; }
+
+        /* ─── 12. PULL QUOTE ────────────────────────────────────── */
+        .pull {
+            margin: 5mm 4mm;
+            padding: 3mm 0 3mm 8mm;
+            border-left: 2.5pt solid var(--accent);
+            font-family: var(--serif);
+            font-style: italic;
+            font-size: 13pt;
+            line-height: 1.5;
+            color: var(--ink);
+            page-break-inside: avoid;
+            background: linear-gradient(90deg, var(--accent-lt), transparent 70%);
+        }
+        .pull .attr { display: block; font-family: var(--sans); font-style: normal; font-size: 8pt; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-4); margin-top: 3mm; }
+
+        /* ─── 13. CONCEPTUAL MAP ────────────────────────────────── */
+        .connection-block {
+            border-left: 2pt solid var(--accent-rule);
+            padding: 3mm 5mm;
+            margin-bottom: 5mm;
+            page-break-inside: avoid;
+        }
+        .connection-heading {
+            font-family: var(--sans);
+            font-size: 6.8pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            color: var(--accent-text);
+            margin-bottom: 1.5mm;
+        }
+        .connection-block p {
+            font-size: 9.5pt;
+            color: var(--ink-2);
+            margin: 0;
+            line-height: 1.75;
+        }
+
+        /* ─── 14. KEY TAKEAWAYS ─────────────────────────────────── */
+        .takeaway-list { list-style: none; padding: 0; margin: 0; }
+        .takeaway-list li {
+            display: flex;
+            gap: 9px;
+            align-items: flex-start;
+            padding: 3.5mm 5mm;
+            margin-bottom: 2.2mm;
+            background: linear-gradient(135deg, var(--accent-lt) 0%, var(--paper-2) 100%);
+            border: 0.4pt solid var(--accent-mid);
+            border-left: 2pt solid var(--accent-rule);
+            border-radius: 7px;
+            font-size: 9.5pt;
+            color: var(--ink-2);
+            line-height: 1.65;
+            overflow: visible;
+            max-height: none;
+        }
+        .takeaway-num {
+            font-weight: 700;
+            color: var(--accent-text);
+            font-size: 8pt;
+            padding-top: 1px;
+            min-width: 18pt;
+            width: 18pt;
+            height: 18pt;
+            background: var(--accent-lt);
+            border: 0.5pt solid var(--accent-mid);
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            text-align: center;
+            line-height: 18pt;
+        }
+
+        /* ─── 15. GLOSSARY ──────────────────────────────────────── */
+        .glossary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+        .glossary-item {
+            border: var(--hairline);
+            border-left: 2pt solid var(--accent-rule);
+            border-radius: 7px;
+            padding: 3.5mm 4.5mm;
+            page-break-inside: avoid;
+            background: var(--paper);
+        }
+        .glossary-term { font-size: 9.5pt; font-weight: 700; color: var(--ink); margin-bottom: 1.5mm; font-family: var(--serif); }
+        .glossary-def  { font-size: 8.5pt; color: var(--ink-3); line-height: 1.58; }
+        .glossary-mnemonic { font-size: 8pt; color: #7c3aed; font-style: italic; margin-top: 2mm; line-height: 1.45; }
+
+        /* ─── 16. VISUAL FRAMES ─────────────────────────────────── */
+        .visual-frame { border-left: 2pt solid var(--ink-6); padding: 3mm 5mm; margin-bottom: 4mm; page-break-inside: avoid; }
+        .vf-time   { font-family: var(--mono); font-size: 7.5pt; color: var(--ink-4); margin-bottom: 1.5mm; }
+        .vf-title  { font-size: 11pt; font-weight: 600; color: var(--ink); margin-bottom: 2mm; }
+        .vf-label  { font-size: 7pt; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); margin-bottom: 1.5mm; }
+        .vf-eq     { font-family: var(--mono); font-size: 10pt; color: var(--accent-text); margin-bottom: 1mm; padding: 2mm 3mm; background: var(--accent-lt); border-radius: 3px; }
+        .vf-text   { font-size: 9.5pt; color: var(--ink-2); line-height: 1.6; }
+        .vf-diagram{ font-size: 9pt; color: var(--ink-3); font-style: italic; margin-bottom: 1mm; }
+
+        /* ─── 17. SELF-TEST ─────────────────────────────────────── */
+        .review-item { margin-bottom: 7mm; page-break-inside: avoid; }
+        .review-header { display: flex; align-items: center; gap: 6px; margin-bottom: 2.5mm; }
+        .review-num  { font-weight: 700; font-size: 9.5pt; color: var(--ink); }
+        .review-dot  { color: var(--ink-4); font-size: 9pt; }
+        .difficulty-badge { font-size: 7pt; font-weight: 700; padding: 1.5px 8px; border-radius: 10px; }
+        .diff-recall       { background: var(--ink-7); color: var(--ink-3); }
+        .diff-understanding{ background: var(--accent-lt); color: var(--accent-text); border: 0.4pt solid var(--accent-mid); }
+        .diff-application  { background: #fffbeb; color: #b45309; border: 0.4pt solid #fde68a; }
+        .review-question-block { border-left: 2.5pt solid var(--accent-rule); padding: 3.5mm 5mm; background: var(--paper); border-radius: 0 7px 7px 0; margin-bottom: 2mm; border-top: var(--hairline); border-right: var(--hairline); border-bottom: var(--hairline); }
+        .review-question { font-size: 10.5pt; font-weight: 500; color: var(--ink); margin-bottom: 2mm; line-height: 1.6; }
+        .review-answer-block { background: linear-gradient(180deg, var(--ink-7), #fff); border: var(--hairline); border-radius: 7px; padding: 3.5mm 5mm; }
+        .review-answer { font-size: 9pt; color: var(--ink-3); line-height: 1.65; }
+
+        /* ─── 18. FOLD RULE ─────────────────────────────────────── */
+        .fold {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            gap: 6mm;
+            margin: 8mm 0;
+            page-break-inside: avoid;
+        }
+        .fold .line { height: 0; border-top: 0.6pt dashed var(--ink-4); }
+        .fold .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6pt;
+            padding: 3pt 9pt 3pt 6pt;
+            border: 0.5pt solid var(--ink-4);
+            border-radius: 999px;
+            background: var(--paper);
+            font-family: var(--sans);
+            font-size: 7.5pt;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--ink-3);
+        }
+        .fold .scissor {
+            display: inline-grid;
+            place-items: center;
+            width: 14pt; height: 14pt;
+            border: 0.5pt solid var(--ink-4);
+            border-radius: 50%;
+            font-size: 8.5pt;
+            color: var(--ink-2);
+            transform: rotate(-12deg);
+        }
+
+        /* ─── 19. CHEAT SHEET ───────────────────────────────────── */
+        .cheat-page { page-break-before: always; padding-top: 4mm; }
+        .cheat-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            border-bottom: 1.5pt solid var(--ink-5);
+            padding-bottom: 4mm;
+            margin-bottom: 6mm;
+        }
+        .cheat-head h2 { font-size: 22pt; }
+        .cheat-head .meta { font-family: var(--sans); font-size: 7pt; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-4); }
+        .cheat-grid {
+            display: grid;
+            grid-template-columns: 1.05fr 1.65fr 1.2fr 1.15fr;
+            gap: 0;
+            border-top: var(--hairline);
+            border-left: var(--hairline);
+            background: #fff;
+        }
+        .cheat-grid .col-head {
+            font-family: var(--sans);
+            font-size: 6.5pt;
+            font-weight: 700;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--ink-4);
+            padding: 2.5mm 3.2mm;
+            background: linear-gradient(180deg, var(--ink-7), #fff);
+            border-right: var(--hairline);
+            border-bottom: 1pt solid var(--ink-5);
+        }
+        .cheat-grid .chapter-band {
+            grid-column: 1 / -1;
+            padding: 2.5mm 3.5mm 2.2mm;
+            border-right: var(--hairline);
+            border-bottom: var(--hairline);
+            background: linear-gradient(90deg, var(--accent-lt) 0%, color-mix(in oklab, var(--accent-lt) 20%, #fff 80%) 50%, #fff 100%);
+            border-left: 2.5pt solid var(--accent);
+        }
+        .cheat-grid .chapter-band .chapter-label {
+            font-size: 6.5pt;
+            font-weight: 700;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--accent-text);
+            margin-bottom: 0.8mm;
+        }
+        .cheat-grid .chapter-band .chapter-title {
+            font-family: var(--serif);
+            font-size: 10.5pt;
+            font-weight: 600;
+            color: var(--ink);
+            line-height: 1.2;
+        }
+        .cheat-grid .cell {
+            padding: 2.8mm 3.2mm;
+            border-right: var(--hairline);
+            border-bottom: var(--hairline);
+            font-size: 8.35pt;
+            line-height: 1.38;
+            color: var(--ink-2);
+        }
+        .cheat-grid .cell.term-cell {
+            font-family: var(--serif);
+            font-size: 9.5pt;
+            font-weight: 600;
+            color: var(--ink);
+            letter-spacing: -0.004em;
+        }
+        .cheat-grid .cell.trap-cell {
+            color: var(--accent-dark);
+            background: color-mix(in oklab, var(--accent) 6%, white 94%);
+        }
+        .cheat-grid .cell.recall-cell {
+            font-weight: 600;
+            color: var(--ink);
+            font-size: 8pt;
+            white-space: normal !important;
+            overflow: visible !important;
+            max-width: none !important;
+            text-overflow: clip !important;
+            word-break: normal !important;
+            overflow-wrap: anywhere;
+        }
+        .cheat-grid .cell .cite {
+            display: block;
+            margin-top: 1mm;
+            font-family: var(--mono);
+            font-size: 6.85pt;
+            color: var(--ink-4);
+        }
+
+        /* ─── 20. LEARNING PATH ─────────────────────────────────── */
+        .roadmap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; }
+        .roadmap-col-heading { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3mm; padding-bottom: 2mm; border-bottom: var(--hairline); }
+        .roadmap-before { color: var(--ink-3); }
+        .roadmap-next   { color: var(--accent-text); }
+        .roadmap-list { list-style: none; padding: 0; margin: 0; }
+        .roadmap-list li { margin-bottom: 3.5mm; page-break-inside: avoid; }
+        .roadmap-concept { font-size: 9.5pt; font-weight: 600; color: var(--ink); margin-bottom: 0.8mm; }
+        .roadmap-reason  { font-size: 8.5pt; color: var(--ink-3); line-height: 1.55; }
+
+        /* ─── 21. STATIC FOOTER ─────────────────────────────────── */
+        .foot-static {
+            margin-top: 12mm;
+            border-top: 1pt solid var(--ink-5);
+            padding-top: 2.5mm;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10mm;
+            font-family: var(--sans);
+            font-size: 6.75pt;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--ink-4);
+            white-space: nowrap;
+        }
+        .foot-static .lhs { display: flex; gap: 10pt; align-items: center; }
+        .foot-static .lhs .dot { width: 5px; height: 5px; background: var(--accent); display: inline-block; transform: rotate(45deg); opacity: 0.7; }
+
+        /* Final PDF text-layer override. The :not(#id) selector deliberately
+           carries ID specificity so no heading/card class can reintroduce
+           non-zero spacing or ligatures and scramble copied PDF text. */
+        html,
+        body,
+        body *,
+        body *::before,
+        body *::after,
+        h1, h2, h3, h4, h5, h6, p, span, div, td, th {
+            letter-spacing: 0 !important;
+            word-spacing: 0 !important;
+            font-variant-ligatures: none !important;
+            -webkit-font-variant-ligatures: none !important;
+            font-feature-settings: "liga" 0, "calt" 0 !important;
+            text-rendering: geometricPrecision !important;
+        }
+        .exam-trap-block {
+          margin: 3mm 0 2mm;
+          padding: 3mm 4mm;
+          background: #fffbeb;
+          border: 0.5pt solid #fde68a;
+          border-left: 2.5pt solid #f59e0b;
+          border-radius: 5px;
+          page-break-inside: avoid;
+        }
+        .exam-trap-label {
+          font-size: 6.8pt;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.14em;
+          color: #b45309;
+          margin-bottom: 1.5mm;
+        }
+        .exam-trap-body {
+          display: flex;
+          flex-direction: column;
+          gap: 1mm;
+        }
+        .exam-trap-wrong {
+          font-size: 8.7pt;
+          color: #92400e;
+          font-weight: 600;
+          line-height: 1.5;
+        }
+        .exam-trap-correct {
+          font-size: 8.7pt;
+          color: #065f46;
+          line-height: 1.5;
+        }
+        .trap-wrong {
+          display: block;
+          font-size: 8.7pt;
+          color: #92400e;
+          font-weight: 600;
+          line-height: 1.5;
+          margin-bottom: 1mm;
+        }
+        .trap-correct {
+          display: block;
+          font-size: 8.7pt;
+          color: #065f46;
+          line-height: 1.5;
+        }
+        .section-meta-rows {
+          margin: 0 0 3mm;
+          border: 0.5pt solid var(--ink-6);
+          border-radius: 5px;
+          overflow: hidden;
+        }
+        .section-meta-row {
+          display: grid;
+          grid-template-columns: 22mm 1fr;
+          border-bottom: 0.5pt solid var(--ink-6);
+          page-break-inside: avoid;
+        }
+        .section-meta-row:last-child {
+          border-bottom: none;
+        }
+        .section-meta-label {
+          font-size: 6.8pt;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.14em;
+          color: var(--ink-4);
+          padding: 2.5mm 3mm;
+          background: var(--ink-7);
+          border-right: 0.5pt solid var(--ink-6);
+          display: flex;
+          align-items: flex-start;
+          padding-top: 3mm;
+        }
+        .section-meta-value {
+          font-size: 8.5pt;
+          color: var(--ink-2);
+          padding: 2.5mm 3mm;
+          line-height: 1.5;
+        }
+        .examples-inline {
+          font-family: var(--mono);
+          font-size: 8pt;
+          color: #1d6b52;
+        }
+        .exam-trap-row .section-meta-label {
+          color: #b45309;
+          background: #fffbeb;
+        }
+        .exam-trap-inline {
+          color: var(--ink-2);
+          background: #fffbeb;
+        }
+        .exam-trap-inline strong {
+          color: #92400e;
+          font-weight: 600;
+          display: block;
+          margin-bottom: 1mm;
+        }
+        .exam-chip {
+          background: #fffbeb;
+          color: #b45309;
+          border-color: #fde68a;
+        }
+        .example-chip {
+          background: #f0fdf4;
+          color: #166534;
+          border-color: #bbf7d0;
+        }
+        .study-plan-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(72mm, 1fr));
+            gap: 3mm;
+            margin-bottom: 6mm;
+        }
+        .study-day-card {
+            border: 0.5pt solid var(--ink-5);
+            border-top: 2pt solid var(--accent-rule);
+            border-radius: 5px;
+            padding: 3.5mm 4mm;
+            page-break-inside: avoid;
+            background: linear-gradient(180deg, var(--accent-lt), #fff 70%);
+        }
+        .study-day-header {
+            display: flex;
+            align-items: baseline;
+            gap: 3mm;
+            margin-bottom: 2.5mm;
+        }
+        .study-day-num {
+            font-family: var(--sans);
+            font-size: 6.8pt;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--accent-text);
+            white-space: nowrap;
+        }
+        .study-day-label {
+            font-family: var(--serif);
+            font-size: 10pt;
+            color: var(--ink);
+            font-weight: 600;
+            line-height: 1.2;
+        }
+        .study-day-chapters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px;
+            margin-bottom: 2.5mm;
+        }
+        .study-chapter-pill {
+            font-size: 7.2pt;
+            color: var(--ink-3);
+            background: var(--ink-7);
+            border: 0.4pt solid var(--ink-5);
+            border-radius: 99px;
+            padding: 1px 6px;
+            line-height: 1.4;
+        }
+        .study-day-task {
+            font-size: 8.2pt;
+            color: var(--ink-2);
+            font-style: italic;
+            line-height: 1.45;
+            padding-top: 2mm;
+            border-top: 0.4pt solid var(--ink-6);
+        }
+        .study-reminders {
+            border: 0.5pt solid var(--ink-5);
+            border-radius: 5px;
+            padding: 4mm 5mm;
+            margin-bottom: 5mm;
+            background: var(--paper-2);
+        }
+        .study-reminders-label {
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+            color: var(--ink-3);
+            margin-bottom: 2.5mm;
+        }
+        .study-reminders-list {
+            margin: 0;
+            padding-left: 4mm;
+            list-style: none;
+        }
+        .study-reminders-list li {
+            font-size: 8.5pt;
+            color: var(--ink-2);
+            line-height: 1.6;
+            margin-bottom: 1.5mm;
+            padding-left: 3mm;
+            position: relative;
+        }
+        .study-reminders-list li::before {
+            content: "–";
+            position: absolute;
+            left: 0;
+            color: var(--ink-4);
+        }
+    </style>
+</head>
+
+<body style="--accent: {{ accent_color }};">
+
+    <!-- ══════════════════════════════════════
+         COVER PAGE
+    ══════════════════════════════════════ -->
+    <div class="cover">
+        <header class="cover-mark">
+            <div class="wordmark">Neurativo</div>
+            <div class="label">Lecture <span class="sep"></span> Intelligence Report</div>
+        </header>
+
+        <div class="cover-body">
+            <div class="cover-accent"></div>
+            <div class="cover-meta">
+                {% if topic %}<div><b>{{ topic }}</b></div>{% endif %}
+                {% if language %}<div>{{ language | upper }}</div>{% endif %}
+                <div>{{ created_at }}</div>
+            </div>
+
+            <h1 class="cover-title">{{ title }}</h1>
+
+            {% if executive_summary %}
+            <p class="cover-deck">{{ cover_summary_preview or executive_summary.split('\n\n')[0] }}</p>
+            {% endif %}
+
+            <div class="cover-strip">
+                <div class="tile">
+                    <div class="k">Duration</div>
+                    <div class="v">{{ duration_formatted }}</div>
+                    <div class="u">Lecture length</div>
+                </div>
+                <div class="tile">
+                    <div class="k">Topics Covered</div>
+                    <div class="v">{{ total_sections }}</div>
+                    <div class="u">Distinct chapters</div>
+                </div>
+                <div class="tile">
+                    <div class="k">{{ cover_stat3.k }}</div>
+                    <div class="v">{{ cover_stat3.v }}</div>
+                    <div class="u">{{ cover_stat3.u }}</div>
+                </div>
+                <div class="tile">
+                    <div class="k">{{ cover_stat4.k }}</div>
+                    <div class="v">{{ cover_stat4.v }}</div>
+                    <div class="u">{{ cover_stat4.u }}</div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="cover-foot">
+            <div class="brand">neurativo.app</div>
+            <div class="issue">Generated {{ created_at }}{% if total_sections %} · {{ total_sections }} sections{% endif %}</div>
+        </footer>
+    </div>
+
+
+    <!-- ══════════════════════════════════════
+         TABLE OF CONTENTS
+    ══════════════════════════════════════ -->
+    {% if enriched_sections | length > 1 and not preview_upgrade %}
+    <div class="toc-page">
+        <div class="eyebrow-row" style="padding-top: 2mm;">
+            <span class="eyebrow-label">Contents</span>
+        </div>
+        <hr class="eyebrow-rule">
+        <h2 class="toc-h">Table of Contents</h2>
+
+        {% for entry in toc_entries %}
+        <div class="toc-row depth-{{ entry.depth }}">
+            <span class="toc-num">{{ entry.number }}</span>
+            <span class="toc-sec-title">{{ entry.title }}</span>
+            <span class="toc-dots"></span>
+            <span class="toc-page-num">{{ entry.page }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if preview_upgrade %}
+    <div class="preview-page">
+        <div class="eyebrow-row" style="padding-top: 2mm;">
+            <span class="eyebrow-label">Free Preview</span>
+        </div>
+        <hr class="eyebrow-rule">
+
+        <div class="preview-hero">
+            <div>
+                <div class="preview-kicker">Preview PDF</div>
+                <div class="preview-title">A usable preview now, the full report after upgrade.</div>
+                <p class="preview-copy">
+                    This export includes the report shell and the first visible layer of the lecture.
+                    Upgrade when you want the full transcript, the complete section breakdown,
+                    and the rest of the study material generated from this session.
+                </p>
+            </div>
+            <div class="preview-upgrade-box">
+                <div class="label">Locked Behind Upgrade</div>
+                <div class="value">
+                    {% if preview_hidden_sections > 0 %}
+                    {{ preview_hidden_sections }} more section{% if preview_hidden_sections != 1 %}s{% endif %}
+                    {% else %}
+                    Full report access
+                    {% endif %}
+                </div>
+                <div class="sub">
+                    Student and Pro can regenerate this lecture as a complete PDF without the preview watermark.
+                </div>
+            </div>
+        </div>
+
+        <div class="preview-grid">
+            <div class="preview-panel">
+                <h3>Included In This Preview</h3>
+                <ul class="preview-list">
+                    {% for item in preview_now_features %}
+                    <li>{{ item }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            <div class="preview-panel">
+                <h3>Unlocked In The Full Report</h3>
+                <ul class="preview-list">
+                    {% for item in preview_upgrade_features %}
+                    <li>{{ item }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        {% if preview_sections %}
+        <div class="preview-section-grid">
+            {% for sec in preview_sections %}
+            <div class="preview-section-card">
+                <div class="index">Preview {{ loop.index }}</div>
+                <div class="title">{{ sec.title }}</div>
+                <p>{{ sec.prose }}</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         EXECUTIVE SUMMARY
+    ══════════════════════════════════════ -->
+    {% if executive_summary and not preview_upgrade %}
+    <div class="eyebrow-row pb-before">
+        <span class="eyebrow-label">Executive Summary</span>
+    </div>
+    <hr class="eyebrow-rule">
+    <h2>Overview</h2>
+
+    <div class="exec-card">
+        {% set exec_paras = executive_summary.split('\n\n') %}
+        {% for para in exec_paras %}
+            {% if loop.first %}
+            <p class="drop-cap">{{ para }}</p>
+            {% else %}
+            <p>{{ para }}</p>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+    {% if key_stats %}
+    <div class="stat-row">
+        {% for stat in key_stats %}
+        <div class="stat">
+            <div class="num">{{ stat.value }}</div>
+            <div class="lbl">{{ stat.label }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if revision_focus %}
+    <div class="revision-focus-strip">
+        {% for item in revision_focus %}
+        <div class="revision-focus-card">
+            <div class="label">KEY CONCEPT</div>
+            <div class="concept">{{ item.concept }}</div>
+            <div class="reason">{{ item.reason }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         SECTION BREAKDOWN
+    ══════════════════════════════════════ -->
+    {% if enriched_sections %}
+    <div class="eyebrow-row pb-before">
+        <span class="eyebrow-label">Verified Lecture Notes</span>
+    </div>
+    <hr class="eyebrow-rule">
+    <p class="trust-note">
+        These notes are built from transcript-supported sections{% if summary_confidence %} with an overall grounding score of {{ (summary_confidence * 100) | int }}%{% endif %}.
+    </p>
+
+    {% for sec in enriched_sections %}
+    <article class="section {{ sec.render_mode }} {% if sec.chapter_density == 'dense' %}dense{% elif sec.chapter_density == 'compact' %}compact{% endif %}">
+        <div class="section-watermark">{{ "%02d"|format(loop.index) }}</div>
+
+        <header class="section-head">
+            <div class="section-num">§&thinsp;{{ loop.index }}</div>
+            <div>
+                <div class="chapter-kicker">Chapter {{ loop.index }}</div>
+                <h2 class="section-title">{{ sec.title }}</h2>
+                {% if sec.lead_sentence and sec.analogy %}
+                <div class="section-sub">{{ sec.lead_sentence }}</div>
+                {% endif %}
+            </div>
+            <div class="section-spacer"></div>
+        </header>
+
+        <div class="section-body">
+            {% if sec.subsections %}
+            <div class="subtopics-label">Subtopics</div>
+            <div class="subtopics-row">
+                {% for sub in sec.subsections %}
+                {% set chip_class = 'subtopic-chip exam-chip' if 'Exam Trap' in sub else 'subtopic-chip example-chip' if 'Example' in sub else 'subtopic-chip' %}
+                <span class="{{ chip_class }}">{{ sub }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if sec.inline_mode and sec.inline_items %}
+            <div class="study-inline-grid">
+                {% for item in sec.inline_items %}
+                <div class="label">{{ item.label }}</div>
+                <div class="value{% if item.kind == 'exam-trap' %} trap{% endif %}">{{ item.text }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if sec.examples %}
+            <div class="section-meta-rows">
+              {% if sec.examples %}
+              <div class="section-meta-row">
+                <div class="section-meta-label">EXAMPLES</div>
+                <div class="section-meta-value examples-inline">{{ sec.examples | join(' · ') }}</div>
+              </div>
+              {% endif %}
+            </div>
+            {% endif %}
+
+            {% if sec.exam_trap_structured and sec.exam_trap_structured.misconception and sec.exam_trap_structured.correct and sec.exam_trap_structured.misconception != sec.exam_trap_structured.correct %}
+            <div class="exam-trap-block">
+              <span class="trap-wrong">✗ {{ sec.exam_trap_structured.misconception }}</span>
+              <span class="trap-correct">✓ {{ sec.exam_trap_structured.correct }}</span>
+            </div>
+            {% elif sec.exam_traps %}
+            {% set trap = sec.exam_traps[0] %}
+            {% if trap is mapping and trap.misconception and trap.correct %}
+            <div class="exam-trap-block">
+              <span class="trap-wrong">✗ {{ trap.misconception }}</span>
+              <span class="trap-correct">✓ {{ trap.correct }}</span>
+            </div>
+            {% elif trap is string and trap %}
+            <div class="exam-trap-block">
+              <span class="trap-wrong">✗ {{ trap }}</span>
+            </div>
+            {% endif %}
+            {% endif %}
+
+            {% if sec.code_examples %}
+            {% for code in sec.code_examples %}
+            <div class="code-block">
+                <div class="code-lang">{{ topic | upper if topic else "CODE" }}</div>
+                <pre><div class="gutter">{% for line in code.split('\n') %}{{ loop.index }}
+{% endfor %}</div><div class="src">{{ code }}</div></pre>
+            </div>
+            {% endfor %}
+            {% endif %}
+
+            {% if sec.analogy %}
+            <div class="analogy-box">
+                <div class="analogy-left">
+                    <div class="analogy-col-label">What it is</div>
+                    <div class="analogy-text">{{ sec.lead_sentence }}</div>
+                </div>
+                <div class="analogy-right">
+                    <div class="analogy-col-label">Real-world analogy</div>
+                    <div class="analogy-text">{{ sec.analogy }}</div>
+                </div>
+            </div>
+            {% elif sec.lead_sentence %}
+            <p class="ls-lead" style="font-family:var(--sans);letter-spacing:0!important;font-variant-ligatures:none!important;">{{ sec.lead_sentence }}</p>
+            {% endif %}
+
+            {% if sec.prose %}
+                {% for para in sec.prose.split('\n\n') %}
+                <p>{{ para }}</p>
+                {% endfor %}
+            {% endif %}
+
+            {% if sec.bullets %}
+            <ul class="section-bullets">
+                {% for bullet in sec.bullets %}
+                <li>{{ bullet }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if sec.show_definition_box %}
+            <div class="edu-box">
+                <div class="edu-box-label">Key Definitions</div>
+                <ul class="edu-box-list">
+                    {% for item in sec.definitions %}
+                    <li>{{ item }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if sec.show_distinction_box %}
+            {% if sec.versus_items %}
+            {% for item in sec.versus_items[:1] %}
+            <div class="versus-grid">
+                <div class="versus-cell">
+                    <div class="versus-label">{% if item.left_label %}{{ item.left_label }}{% else %}Left Side{% endif %}</div>
+                    <div class="versus-text">{{ item.left }}</div>
+                </div>
+                <div class="versus-cell">
+                    <div class="versus-label">{% if item.right_label %}{{ item.right_label }}{% else %}Right Side{% endif %}</div>
+                    <div class="versus-text">{{ item.right }}</div>
+                </div>
+            </div>
+            {% if item.detail and not item.left_label %}
+            <p>{{ item.detail }}</p>
+            {% endif %}
+            {% endfor %}
+            {% else %}
+            <div class="edu-box">
+                <div class="edu-box-label">Important Distinctions</div>
+                <ul class="edu-box-list">
+                    {% for item in sec.distinctions %}
+                    {% if item and item|string|trim %}
+                    {% if " | " in item|string %}
+                    {% set parts = item|string.split(" | ") %}
+                    {% for part in parts %}{% if part | trim %}<li>{{ part | trim }}</li>{% endif %}{% endfor %}
+                    {% else %}
+                    <li>{{ item }}</li>
+                    {% endif %}
+                    {% endif %}
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% endif %}
+
+            {% if sec.concepts %}
+            <div class="concepts-wrap">
+                <div class="concepts-label">Key Concepts</div>
+                <div class="concepts-pills">
+                    {% for c in sec.concepts %}
+                    <span class="concept-pill">{{ c }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if sec.show_subtopic_stack and sec.subtopic_sections %}
+            <div class="subtopic-stack">
+                {% for item in sec.subtopic_sections %}
+                <div class="subtopic-item">
+                    <div class="subtopic-head">
+                        <div class="subtopic-title">{{ item.title }}</div>
+                        {% if item.citations %}
+                        <div class="subtopic-source">
+                            {% for cite in item.citations[:2] %}
+                            {{ cite.label }}{% if not loop.last %} · {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% if item.overview %}
+                    <div class="subtopic-overview">{{ item.overview }}</div>
+                    {% endif %}
+                    <div class="subtopic-inline-list">
+                        {% if item.definitions %}
+                        <span><strong>Definition</strong>{{ item.definitions[0] }}</span>
+                        {% endif %}
+                        {% if item.examples %}
+                        <span><strong>Example</strong>{{ item.examples[0] }}</span>
+                        {% endif %}
+                        {% if item.exam_traps %}
+                        <span><strong>Exam Trap</strong>{{ item.exam_traps[0] }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if sec.citations %}
+            <div class="section-source">
+                Source
+                {% for cite in sec.citations %}
+                <strong>{{ cite.label }}</strong>{% if not loop.last %} · {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if sec.mistake or sec.remember %}
+            <div class="mr-box">
+                {% if sec.mistake %}
+                <div class="mr-mistake">
+                    <div class="mr-label">Common Mistake</div>
+                    <div class="mr-text">{{ sec.mistake }}</div>
+                </div>
+                {% else %}
+                <div class="mr-mistake"></div>
+                {% endif %}
+                {% if sec.remember %}
+                <div class="mr-remember">
+                    <div class="mr-label">Remember This</div>
+                    <div class="mr-text">{{ sec.remember }}</div>
+                </div>
+                {% else %}
+                <div class="mr-remember"></div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+        </div>
+    </article>
+    {% endfor %}
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         CONCEPTUAL MAP
+    ══════════════════════════════════════ -->
+    {% if conceptual_map %}
+    <div class="eyebrow-row pb-before">
+        <span class="eyebrow-label">How It All Connects</span>
+    </div>
+    <hr class="eyebrow-rule">
+    <h2>Conceptual Map</h2>
+
+    {% for conn in conceptual_map %}
+    <div class="connection-block">
+        {% if conn.heading %}
+        <div class="connection-heading">{{ conn.heading }}</div>
+        {% endif %}
+        <p>{{ conn.paragraph or conn.connection }}</p>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         KEY TAKEAWAYS
+    ══════════════════════════════════════ -->
+    {% if takeaways %}
+    <div class="eyebrow-row pb-before">
+        <span class="eyebrow-label">AI Study Aid</span>
+    </div>
+    <hr class="eyebrow-rule">
+    <h2>Key Takeaways</h2>
+
+    <ul class="takeaway-list">
+        {% for t in takeaways %}
+        <li>
+            <span class="takeaway-num">{{ loop.index }}.</span>
+            {{ t }}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         GLOSSARY
+    ══════════════════════════════════════ -->
+    {% if glossary %}
+    <div class="eyebrow-row pb-before">
+        <span class="eyebrow-label">AI Study Aid</span>
+    </div>
+    <hr class="eyebrow-rule">
+    <h2>{{ glossary_label }}</h2>
+
+    <div class="glossary-grid">
+        {% for item in glossary %}
+        <div class="glossary-item">
+            <div class="glossary-term">{{ item.term }}</div>
+            <div class="glossary-def">{{ item.definition }}</div>
+            {% if item.mnemonic %}
+            <div class="glossary-mnemonic">💡 {{ item.mnemonic }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         VISUAL CONTENT
+    ══════════════════════════════════════ -->
+    {% if visual_frames %}
+    <div class="eyebrow-row pb-before">
+        <span class="eyebrow-label">Visual Content Captured</span>
+    </div>
+    <hr class="eyebrow-rule">
+    <h2>Visual Content</h2>
+
+    {% for frame in visual_frames %}
+    {% if frame.formatted_text %}
+    <div class="visual-frame">
+        <div class="vf-time">{{ frame.timestamp_seconds | format_time }}</div>
+        {% if frame.title %}<div class="vf-title">{{ frame.title }}</div>{% endif %}
+        {% if frame.equations %}
+        <div>
+            <div class="vf-label">Equations</div>
+            {% for eq in frame.equations %}<div class="vf-eq">{{ eq }}</div>{% endfor %}
+        </div>
+        {% endif %}
+        {% if frame.text_content %}<div class="vf-text">{{ frame.text_content }}</div>{% endif %}
+        {% if frame.diagrams %}
+        <div>
+            <div class="vf-label">Diagrams</div>
+            {% for d in frame.diagrams %}<div class="vf-diagram">{{ d }}</div>{% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         SELF-TEST
+    ══════════════════════════════════════ -->
+    {% if quick_review %}
+    <div class="eyebrow-row pb-before">
+        <span class="eyebrow-label">AI Study Aid</span>
+    </div>
+    <hr class="eyebrow-rule">
+    <h2>{{ review_label }}</h2>
+
+    <div class="fold">
+        <div class="line"></div>
+        <div class="badge">
+            <span class="scissor">✂</span>
+            <span>Fold here · Self-test below</span>
+        </div>
+        <div class="line"></div>
+    </div>
+
+    {% for item in quick_review %}
+    <div class="review-item">
+        <div class="review-header">
+            <span class="review-num">Q{{ loop.index }}</span>
+            <span class="review-dot">·</span>
+            {% if item.difficulty == 'Recall' %}
+            <span class="difficulty-badge diff-recall">Recall</span>
+            {% elif item.difficulty == 'Understanding' %}
+            <span class="difficulty-badge diff-understanding">Understanding</span>
+            {% elif item.difficulty == 'Application' %}
+            <span class="difficulty-badge diff-application">Application</span>
+            {% else %}
+            <span class="difficulty-badge diff-recall">{{ item.difficulty }}</span>
+            {% endif %}
+        </div>
+        <div class="review-question-block">
+            <div class="review-question">{{ item.question }}</div>
+        </div>
+        <div class="review-answer-block">
+            <div class="review-answer">{{ item.answer }}</div>
+        </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         CHEAT SHEET (4-col: Term · Concept · Rule · Takeaway)
+    ══════════════════════════════════════ -->
+    {% if verified_cheat_sheet %}
+    <div class="cheat-page">
+        <div class="cheat-head">
+            <h2>Cheat Sheet</h2>
+            <div class="meta">Verified Revision Grid · {{ cheat_sheet_chapter_count }} sections · Print &amp; keep</div>
+        </div>
+
+        <div class="cheat-grid">
+            <div class="col-head">Term</div>
+            <div class="col-head">Core Idea</div>
+            <div class="col-head">Exam Trap</div>
+            <div class="col-head">Quick Recall</div>
+
+            {% for section in verified_cheat_sheet %}
+            <div class="chapter-band">
+                <div class="chapter-label">Chapter {{ loop.index }}</div>
+                <div class="chapter-title">{{ section.chapter_title }}</div>
+            </div>
+
+            {% for row in section.rows %}
+            <div class="cell term-cell">
+                {{ row.term }}
+                {% if row.citations %}
+                <span class="cite">{{ row.citations[0].label }}</span>
+                {% endif %}
+            </div>
+            <div class="cell">{{ row.core_idea }}</div>
+            <div class="cell trap-cell" style="page-break-inside: avoid;">
+                {% if row.exam_trap_structured and row.exam_trap_structured.misconception and row.exam_trap_structured.correct and row.exam_trap_structured.misconception != row.exam_trap_structured.correct %}
+                <div style="page-break-inside: avoid;">
+                <span style="color:#92400e;font-weight:600;display:block;margin-bottom:1mm;">✗ {{ row.exam_trap_structured.misconception }}</span>
+                <span style="color:#065f46;display:block;">✓ {{ row.exam_trap_structured.correct }}</span>
+                </div>
+                {% else %}
+                —
+                {% endif %}
+            </div>
+            <div class="cell recall-cell">{{ row.quick_recall or "—" }}</div>
+            {% endfor %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+
+    <!-- ══════════════════════════════════════
+         LEARNING PATH
+    ══════════════════════════════════════ -->
+    {% if study_roadmap and (study_roadmap.days or study_roadmap.next_topics or study_roadmap.prerequisites) %}
+    <div class="eyebrow-row pb-before">
+        <span class="eyebrow-label">Exam Game Plan</span>
+    </div>
+    <hr class="eyebrow-rule">
+    <h2>How to Use This Report</h2>
+
+    {% if study_roadmap.days %}
+    <div class="study-plan-grid" style="grid-template-columns: {{ 'repeat(3, 1fr)' if study_roadmap.days|length <= 3 else 'repeat(auto-fill, minmax(72mm, 1fr))' }}">
+        {% for day in study_roadmap.days %}
+        <div class="study-day-card">
+            <div class="study-day-header">
+                <div class="study-day-num">DAY {{ day.day }}</div>
+                <div class="study-day-label">{{ day.label }}</div>
+            </div>
+            {% if day.chapters %}
+            <div class="study-day-chapters">
+                {% for ch in day.chapters %}
+                <span class="study-chapter-pill">{{ ch }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if day.task %}
+            <div class="study-day-task">→ {{ day.task }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if study_roadmap.reminders %}
+    <div class="study-reminders">
+        <div class="study-reminders-label">Lecturer's Reminders</div>
+        <ul class="study-reminders-list">
+            {% for reminder in study_roadmap.reminders %}
+            <li>{{ reminder }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if study_roadmap.next_topics or study_roadmap.prerequisites %}
+    <div class="roadmap-grid" style="margin-top: 5mm;">
+        {% if study_roadmap.prerequisites %}
+        <div>
+            <div class="roadmap-col-heading roadmap-before">Before this lecture</div>
+            <ul class="roadmap-list">
+                {% for item in study_roadmap.prerequisites %}
+                <li>
+                    <div class="roadmap-concept">{{ item.concept }}</div>
+                    <div class="roadmap-reason">{{ item.reason }}</div>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+        {% if study_roadmap.next_topics %}
+        <div>
+            <div class="roadmap-col-heading roadmap-next">What to study next</div>
+            <ul class="roadmap-list">
+                {% for item in study_roadmap.next_topics %}
+                <li>
+                    <div class="roadmap-concept">{{ item.topic }}</div>
+                    <div class="roadmap-reason">{{ item.reason }}</div>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% endif %}
+
+</body>
+</html>

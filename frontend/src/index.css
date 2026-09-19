@@ -1,0 +1,404 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-main: #f8fafc;
+  --accent-primary: #2563eb;
+  --accent-secondary: #6366f1;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+
+  /* Neurativo theme tokens */
+  --color-bg: #fafaf9;
+  --color-card: #ffffff;
+  --color-text: #1a1a1a;
+  --color-sec: #6b6b6b;
+  --color-muted: #a3a3a3;
+  --color-border: #f0ede8;
+  --color-border-hov: #e8e4de;
+  --color-dark: #1a1a1a;
+  --color-dark-fg: #fafaf9;
+  --dot-color: #e0ddd8;
+}
+
+.dark {
+  --color-bg: #121212;
+  --color-card: #1e1e1e;
+  --color-text: #f0ede8;
+  --color-sec: #a0a0a0;
+  --color-muted: #666666;
+  --color-border: #2c2c2c;
+  --color-border-hov: #383838;
+  --color-dark: #f0ede8;
+  --color-dark-fg: #121212;
+  --dot-color: #2a2a2a;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    font-family: 'Inter', sans-serif;
+    background-color: var(--color-bg);
+    background-image: radial-gradient(var(--dot-color) 0.75px, transparent 0.75px);
+    background-size: 22px 22px;
+  }
+
+  h1, h2, h3, h4, .font-heading {
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-sm transition-all active:scale-95 shadow-sm;
+  }
+
+  .btn-ghost {
+    @apply px-3.5 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors;
+  }
+
+  .panel-header {
+    @apply h-10 px-4 flex items-center justify-between border-b border-slate-100 bg-slate-50/80 shrink-0;
+  }
+
+  .panel-label {
+    @apply text-[11px] font-semibold text-slate-400 uppercase tracking-wider;
+  }
+}
+
+/* ========================
+   KEYFRAME ANIMATIONS
+======================== */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(28px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50%       { transform: scaleY(1); }
+}
+
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+@keyframes dots-bounce {
+  0%, 80%, 100% { transform: translateY(0); }
+  40%           { transform: translateY(-5px); }
+}
+
+@keyframes nast-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0); }
+  50%       { box-shadow: 0 0 0 6px rgba(20, 184, 166, 0.25); }
+}
+
+@keyframes section-highlight-fade {
+  0%   { border-left-color: #3b82f6; background-color: #eff6ff; }
+  70%  { border-left-color: #3b82f6; background-color: transparent; }
+  100% { border-left-color: transparent; background-color: transparent; }
+}
+
+@keyframes bg-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%       { opacity: 0.6;  transform: scale(1.06); }
+}
+
+/* Animation classes */
+.animate-fade-in        { animation: fade-in 0.25s ease forwards; }
+.animate-slide-up       { animation: slide-up 0.3s ease forwards; }
+.animate-slide-in-right { animation: slide-in-right 0.28s ease forwards; }
+.animate-bg-pulse       { animation: bg-pulse 4s ease-in-out infinite; }
+
+/* .wave-bar is no longer used — waveform bars are driven by the Web Audio API analyser */
+
+.pulse-red {
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+
+.nast-glow {
+  animation: nast-glow 1.2s ease-in-out 2;
+}
+
+.section-new {
+  border-left: 3px solid #3b82f6 !important;
+  animation: section-highlight-fade 2s ease-out forwards;
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e8edf5 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes summary-card-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.summary-card-enter {
+  animation: summary-card-enter 300ms ease both;
+}
+
+/* Concept pills row — explicit CSS to override any Tailwind gap/wrap issues */
+.concepts-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.concept-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  background: #E6F1FB;
+  color: #185FA5;
+  border: 0.5px solid #B5D4F4;
+  white-space: nowrap;
+}
+
+/* ========================
+   GRADIENT ORBS
+======================== */
+
+@keyframes orb-drift-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%       { transform: translate(40px, -30px) scale(1.05); }
+  66%       { transform: translate(-20px, 20px) scale(0.97); }
+}
+
+@keyframes orb-drift-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  40%       { transform: translate(-50px, 30px) scale(1.08); }
+  70%       { transform: translate(30px, -20px) scale(0.95); }
+}
+
+@keyframes orb-drift-3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%       { transform: translate(25px, 40px) scale(1.04); }
+}
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  pointer-events: none;
+  z-index: 1;
+  mix-blend-mode: multiply;
+}
+
+.orb-1 {
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.45) 0%, transparent 70%);
+  animation: orb-drift-1 14s ease-in-out infinite;
+}
+
+.orb-2 {
+  width: 520px; height: 520px;
+  background: radial-gradient(circle, rgba(20, 184, 166, 0.38) 0%, transparent 70%);
+  animation: orb-drift-2 18s ease-in-out infinite;
+}
+
+.orb-3 {
+  width: 460px; height: 460px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.35) 0%, transparent 70%);
+  animation: orb-drift-3 22s ease-in-out infinite;
+}
+
+.dark .orb-1 { background: radial-gradient(circle, rgba(99, 102, 241, 0.28) 0%, transparent 70%); }
+.dark .orb-2 { background: radial-gradient(circle, rgba(20, 184, 166, 0.22) 0%, transparent 70%); }
+.dark .orb-3 { background: radial-gradient(circle, rgba(139, 92, 246, 0.22) 0%, transparent 70%); }
+
+@media (max-width: 768px) {
+  .orb-1 { width: 320px; height: 320px; }
+  .orb-2 { width: 280px; height: 280px; }
+  .orb-3 { width: 240px; height: 240px; }
+}
+
+/* Section scroll landing — clears sticky nav (60px) + breathing room */
+section[id] {
+  scroll-margin-top: 80px;
+}
+
+/* ========================
+   SCROLLBAR
+======================== */
+
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+.dark ::-webkit-scrollbar-thumb { background: #3a3a3a; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+
+/* ========================
+   DARK MODE — GLOBAL OVERRIDES
+   Covers Tailwind arbitrary classes used in App.jsx (record page)
+   and shared utilities across all components.
+======================== */
+
+/* ── Tailwind arbitrary value overrides ── */
+.dark .bg-white                       { background-color: var(--color-card) !important; }
+.dark .bg-\[#fafaf9\]                 { background-color: var(--color-bg) !important; }
+.dark .bg-\[#f0ede8\]                 { background-color: var(--color-border) !important; }
+.dark .bg-\[#e8e4de\]                 { background-color: var(--color-border-hov) !important; }
+.dark .bg-\[#1a1a1a\]                 { background-color: var(--color-dark) !important; }
+.dark .text-\[#1a1a1a\]               { color: var(--color-text) !important; }
+.dark .text-\[#6b6b6b\]               { color: var(--color-sec) !important; }
+.dark .text-\[#a3a3a3\]               { color: var(--color-muted) !important; }
+.dark .text-\[#fafaf9\]               { color: var(--color-dark-fg) !important; }
+.dark .border-\[#f0ede8\]             { border-color: var(--color-border) !important; }
+.dark .hover\:bg-\[#fafaf9\]:hover    { background-color: var(--color-card) !important; }
+.dark .hover\:bg-\[#e8e4de\]:hover    { background-color: var(--color-border-hov) !important; }
+.dark .hover\:text-\[#1a1a1a\]:hover  { color: var(--color-text) !important; }
+.dark .hover\:bg-\[#333\]:hover       { background-color: #444 !important; }
+.dark .disabled\:bg-\[#f0ede8\]:disabled { background-color: var(--color-border) !important; }
+.dark .disabled\:text-\[#a3a3a3\]:disabled { color: var(--color-muted) !important; }
+.dark .focus\:border-\[#c0bdb8\]:focus { border-color: var(--color-border-hov) !important; }
+.dark .placeholder\:text-\[#a3a3a3\]::placeholder { color: var(--color-muted) !important; }
+.dark .selection\:bg-\[#f0ede8\]::selection { background-color: var(--color-border) !important; }
+.dark .bg-\[#fafaf9\]\/80              { background-color: rgba(18,18,18,0.8) !important; }
+
+/* ── Tailwind slate utilities used in App.jsx ── */
+.dark .border-slate-100  { border-color: var(--color-border) !important; }
+.dark .bg-slate-50       { background-color: var(--color-bg) !important; }
+.dark .bg-slate-50\/80   { background-color: rgba(18,18,18,0.8) !important; }
+.dark .text-slate-400    { color: var(--color-muted) !important; }
+.dark .text-slate-600    { color: var(--color-sec) !important; }
+.dark .text-slate-900    { color: var(--color-text) !important; }
+.dark .hover\:bg-slate-100:hover { background-color: var(--color-border) !important; }
+.dark .hover\:text-slate-900:hover { color: var(--color-text) !important; }
+
+/* ── Component utilities from index.css ── */
+.dark .btn-ghost { color: var(--color-sec); }
+.dark .btn-ghost:hover { color: var(--color-text); background-color: var(--color-border); }
+.dark .panel-header { background-color: rgba(18,18,18,0.8); border-color: var(--color-border); }
+.dark .panel-label { color: var(--color-muted); }
+
+/* ── Concept pill dark variant ── */
+.dark .concept-pill {
+  background: #1a2d4a;
+  color: #93c5fd;
+  border-color: #2d4a6f;
+}
+
+/* ── Skeleton shimmer dark variant ── */
+.dark .skeleton-shimmer {
+  background: linear-gradient(90deg, #1e1e1e 25%, #2c2c2c 50%, #1e1e1e 75%);
+}
+
+/* ── Section highlight animation dark variant ── */
+.dark .section-new {
+  border-left: 3px solid #818cf8 !important;
+  animation: section-highlight-fade-dark 2s ease-out forwards;
+}
+@keyframes section-highlight-fade-dark {
+  0%   { border-left-color: #818cf8; background-color: #1e1f3b; }
+  70%  { border-left-color: #818cf8; background-color: transparent; }
+  100% { border-left-color: transparent; background-color: transparent; }
+}
+
+/* ── Gradient orbs: switch to screen blend in dark mode ── */
+.dark .orb { mix-blend-mode: screen; }
+
+/* ── Shared pill dark variants (Dashboard, LectureView, ShareView) ── */
+.dark .db-pill-topic,
+.dark .lv-pill-topic,
+.dark .sv-pill-topic {
+  background: #2d1a4a !important; color: #c4b5fd !important; border-color: #4c2d7a !important;
+}
+.dark .db-pill-lang,
+.dark .lv-pill-lang,
+.dark .sv-pill-lang {
+  background: #0f1e38 !important; color: #93c5fd !important; border-color: #1e3a6a !important;
+}
+.dark .db-pill-dur { background: var(--color-border) !important; }
+
+/* ── Summary highlight dark bg ── */
+.dark .lv-sum-highlight { background: #252525 !important; border-left-color: #4a4a4a !important; }
+.dark .sv-sum-highlight { background: #252525 !important; border-left-color: #4a4a4a !important; }
+
+/* ── Signout / danger hover ── */
+.dark .db-dropdown-signout:hover,
+.dark .lp-nav-dd-signout:hover { background: rgba(239,68,68,0.1) !important; }
+.dark .db-card-menu-item.danger:hover { background: rgba(239,68,68,0.1) !important; }
+
+/* ── Dashboard danger button hover ── */
+.dark .db-btn-danger { background: #b91c1c !important; }
+
+/* ── Dashboard mic denied ── */
+.dark .ob-mic-denied { background: rgba(239,68,68,0.1) !important; border-color: rgba(239,68,68,0.3) !important; }
+
+/* ── Legal page nav backdrop ── */
+.dark .legal-nav { background: rgba(18,18,18,0.92) !important; }
+
+/* ── Legal warning box ── */
+.dark .legal-warning { background: #2a1f00 !important; border-color: #6b5a1a !important; color: #fbbf24 !important; }
+
+/* ── Share modal backdrop ── */
+.dark .lv-share-overlay { background: rgba(0,0,0,0.7); }
+
+/* ── QAAnswer source badge ── */
+.dark .qa-src-badge { background: rgba(255,255,255,0.07) !important; }
+
+/* ── App.jsx blue/emerald/red Tailwind utilities ── */
+.dark .bg-blue-50  { background-color: #0f1e38 !important; }
+.dark .bg-blue-100 { background-color: #1a2d4a !important; }
+.dark .text-blue-400 { color: #60a5fa !important; }
+.dark .text-blue-500 { color: #3b82f6 !important; }
+.dark .text-blue-600 { color: #93c5fd !important; }
+.dark .text-blue-700 { color: #93c5fd !important; }
+.dark .border-blue-100 { border-color: #1e3a6a !important; }
+.dark .bg-emerald-50 { background-color: #0a2218 !important; }
+.dark .bg-red-50 { background-color: rgba(239,68,68,0.1) !important; }
+.dark .hover\:bg-blue-50:hover { background-color: #0f1e38 !important; }
+
+/* ── LectureView redesign dark overrides ── */
+.dark .lv-seg-live { border-left-color: #818cf8; }
+.dark .lv-explain-analogy { background: #291e00 !important; border-color: #4a3800 !important; }
+.dark .lv-explain-analogy .lv-explain-section-label { color: #d97706 !important; }
+.dark .lv-explain-analogy-text { color: var(--color-sec); }
+.dark .lv-explain-step { background: var(--color-card); }
+
+/* ── Domain Picker Modal ── */
+.dp-overlay { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.4); backdrop-filter: blur(6px); padding: 16px; }
+.dp-modal { background: var(--color-card, #fff); border: 1px solid var(--color-border, #f0ede8); border-radius: 20px; width: 100%; max-width: 440px; padding: 24px; font-family: 'Inter', sans-serif; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+.dp-title { font-size: 17px; font-weight: 600; color: var(--color-text, #1a1a1a); letter-spacing: -0.4px; margin: 0 0 4px; }
+.dp-sub { font-size: 13px; color: var(--color-muted, #a3a3a3); margin: 0 0 18px; }
+.dp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 14px; }
+.dp-pill { padding: 7px 4px; border-radius: 9px; border: 1.5px solid var(--color-border, #f0ede8); background: none; cursor: pointer; font-size: 11px; font-weight: 500; color: var(--color-text, #1a1a1a); text-align: center; transition: all 0.12s; text-transform: capitalize; font-family: 'Inter', sans-serif; }
+.dp-pill:hover { border-color: #6366f1; color: #6366f1; }
+.dp-pill.active { background: #f3f0ff; border-color: #6366f1; color: #6366f1; }
+.dp-actions { display: flex; gap: 10px; margin-top: 6px; }
+.dp-btn-primary { flex: 1; padding: 11px; background: #1a1a1a; color: #fafaf9; border: none; border-radius: 11px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; }
+.dp-btn-ghost { flex: 1; padding: 11px; background: none; color: var(--color-sec, #6b6b6b); border: 1.5px solid var(--color-border, #f0ede8); border-radius: 11px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: 'Inter', sans-serif; }

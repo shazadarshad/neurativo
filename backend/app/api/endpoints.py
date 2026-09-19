@@ -1,0 +1,2237 @@
+import asyncio
+import base64
+import binascii
+import json
+import os
+import re
+
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException, Depends, Request, Query
+from fastapi.responses import Response, StreamingResponse, HTMLResponse
+from pydantic import BaseModel, Field
+import numpy as np
+from openai import OpenAI
+
+from app.core.config import settings
+from app.core.auth import get_current_user, get_active_user
+from app.core.plans import get_limits, is_unlimited
+from app.core.rate_limit import limiter
+from app.services.openai_service import transcribe_audio, transcribe_audio_bytes, transcribe_live_chunk, _bg_client, filter_segments_by_confidence, _HALLUCINATION_LANGS
+from app.services.explanation_service import generate_explanation
+from app.services.qa_service import answer_lecture_question
+from app.services.pdf_service import generate_lecture_pdf
+from app.services.topic_service import detect_lecture_topic
+from app.services.summarization_service import (
+    generate_micro_summary,
+    generate_section_summary,
+    generate_master_summary,
+    generate_concept_master_summary,
+)
+from app.services.recompute_service import recompute_final_summary
+from app.services.embedding_service import get_embeddings, cosine_similarity
+from app.services.cif_service import classify_chunk
+from app.services.credits_service import (
+    check_credits,
+    deduct_credit,
+    mark_credit_deducted,
+    refund_credit,
+    credits_for_duration,
+    maybe_grant_starter,
+    reserve_credits,
+    finalize_reserved_credits,
+    get_reserved_credits,
+)
+from app.services.audio_service import compress, split_for_whisper, probe_duration_seconds
+from app.services.transcript_cleaner import clean as clean_transcript
+from app.services.content_generator import generate as generate_content, WHISPER_MODEL
+from app.services.content_generator import summary_has_required_structure
+from app.services.job_queue import create_job, update_job_status, job_is_running
+from app.services.live_cleanup_service import cleanup_stale_live_sessions
+from app.services.supabase_service import (
+    save_generated_content,
+    ensure_user_profile,
+    save_lecture,
+    create_lecture,
+    create_live_session,
+    get_active_live_session,
+    append_lecture_transcript,
+    update_live_session_timestamp,
+    get_lecture_for_summarization,
+    update_lecture_summary_only,
+    create_lecture_chunk,
+    get_micro_summaries,
+    create_lecture_section,
+    get_section_summaries,
+    get_lecture_sections,
+    get_latest_section_end_index,
+    get_latest_section_count,
+    get_unsummarized_chunks,
+    end_live_session,
+    end_live_session_if_active,
+    cleanup_old_chunks,
+    update_lecture_analytics,
+    update_lecture_language,
+    get_lecture_language,
+    get_lecture_topic,
+    update_lecture_topic,
+    get_cached_embeddings,
+    save_embeddings_cache,
+    get_lecture_transcript,
+    get_client,
+    get_recent_lectures,
+    get_lecture_owner,
+    delete_lecture,
+    update_lecture_title,
+    update_lecture_transcript,
+    save_student_question,
+    generate_share_token,
+    clear_share_token,
+    get_lecture_by_share_token,
+    increment_share_views,
+    get_lecture_full,
+    get_user_profile,
+    update_user_profile,
+    delete_user_account,
+    get_monthly_lecture_count,
+    get_monthly_usage,
+    increment_monthly_live,
+    set_lecture_duration,
+    add_monthly_usage_minutes,
+    get_total_lecture_count,
+    set_user_plan,
+    increment_uploads_this_month,
+    save_visual_frame,
+    get_visual_frames,
+    get_visual_frames_in_window,
+    set_summary_status,
+    get_announcements,
+)
+from app.services.trust_service import enrich_lecture_payload, sanitize_generated_content_bundle, build_concept_note_cards
+from app.services.exam_prep_service import generate_exam_prep
+from app.services.concept_map_service import generate_concept_map
+from app.services.feature_flags_service import get_flags_for_user, get_unseen_releases, dismiss_release
+from app.services.supabase_service import (
+    save_exam_prep,
+    get_exam_prep,
+    save_concept_map,
+    get_concept_map,
+    save_lecture_summary_embedding,
+    get_all_user_lecture_embeddings,
+    save_quiz_attempt,
+    get_quiz_attempts,
+)
+
+
+def _next_month_iso() -> str:
+    """Returns ISO timestamp for the first second of next calendar month (UTC)."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        resets = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        resets = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return resets.isoformat()
+
+
+def _complete_live_session_end(lecture_id: str, user_id: str, background_tasks: BackgroundTasks) -> dict:
+    session_closed = end_live_session_if_active(lecture_id)
+    if not session_closed:
+        end_live_session(lecture_id)
+
+    # 1. Settle credits FIRST — fast DB op, must not be skipped by slow GPT
+    if session_closed:
+        try:
+            lec_live = get_lecture_for_summarization(lecture_id)
+            live_dur = (lec_live or {}).get("total_duration_seconds") or 0
+            finalize_reserved_credits(user_id, lecture_id, actual_duration_seconds=live_dur)
+            add_monthly_usage_minutes(user_id, max(0, ((live_dur + 59) // 60) - 1))
+        except Exception as e:
+            print(f"[live/end] credit finalization failed: {e}")
+            # Don't raise — session end must still complete
+
+    # 2. GPT work — non-fatal if slow or fails (beacon connections may drop)
+    try:
+        lecture_data = get_lecture_for_summarization(lecture_id)
+        language     = get_lecture_language(lecture_id) or "en"
+        topic        = get_lecture_topic(lecture_id)
+
+        if lecture_data:
+            last_sec_end   = get_latest_section_end_index(lecture_id)
+            pending_chunks = get_unsummarized_chunks(lecture_id, last_sec_end)
+
+            if pending_chunks:
+                micro_list         = [c['micro_summary'] for c in pending_chunks if c.get('micro_summary')]
+                current_total_secs = lecture_data.get("total_sections") or 0
+                start_idx          = pending_chunks[0]['chunk_index']
+                last_idx           = pending_chunks[-1]['chunk_index']
+                if micro_list:
+                    final_section = generate_section_summary(micro_list, language=language, topic=topic)
+                    create_lecture_section(
+                        lecture_id, final_section, start_idx, last_idx, current_total_secs
+                    )
+
+            all_sections = get_section_summaries(lecture_id)
+            if all_sections:
+                master = generate_master_summary(all_sections, language=language, topic=topic)
+                update_lecture_summary_only(lecture_id, master)
+
+    except Exception as e:
+        print(f"Final summary on end (non-fatal): {e}")
+
+    # 3. Lock cleanup + background tasks
+    if lecture_id in _lecture_locks:
+        del _lecture_locks[lecture_id]
+
+    background_tasks.add_task(cleanup_old_chunks, 30)
+    set_summary_status(lecture_id, "recomputing")
+    background_tasks.add_task(recompute_final_summary, lecture_id)
+
+    return {"status": "ended", "lecture_id": lecture_id}
+
+
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+
+
+def _validate_uuid(lecture_id: str) -> None:
+    """Raises 400 if lecture_id is not a valid UUID."""
+    if not _UUID_RE.match(lecture_id):
+        raise HTTPException(status_code=400, detail="Invalid lecture ID")
+
+
+def _check_owner(lecture_id: str, user_id: str) -> None:
+    """
+    Raises 404 if the lecture doesn't exist.
+    Raises 403 if the lecture has a user_id that doesn't match.
+    """
+    _validate_uuid(lecture_id)
+    owner_id = get_lecture_owner(lecture_id)
+    if owner_id is None:
+        # Lecture doesn't exist or has no owner — check if the lecture actually exists
+        lecture = get_lecture_for_summarization(lecture_id)
+        if not lecture:
+            raise HTTPException(status_code=404, detail="Lecture not found")
+        # Legacy lecture (no owner) — deny access to prevent unauthorized access
+        raise HTTPException(status_code=403, detail="Access denied")
+    if str(owner_id) != str(user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
+# =============================================================================
+#  NEURATIVO ADAPTIVE SECTION TRIGGER  (N.A.S.T.)
+#
+#  A section boundary is a *meaningful moment* — not a word count.
+#  Three independent signals combine into one composite score.
+#
+#  SIGNAL 1 — Semantic Divergence  (weight 0.50)
+#    Mean pairwise cosine similarity across all pending micro-summaries.
+#    Low similarity = chunks cover different ideas = boundary arrived.
+#    Score = 1.0 - mean_pairwise_similarity
+#
+#  SIGNAL 2 — Novelty Drift  (weight 0.30)
+#    Similarity between the FIRST and LATEST micro-summary in the window.
+#    High distance = lecture has drifted far from where this section started.
+#    Score = 1.0 - cosine_similarity(first, latest)
+#
+#  SIGNAL 3 — Momentum  (weight 0.20)
+#    Soft time-pressure. Grows linearly from 0 at MIN_CHUNKS to 1.0 at
+#    MIN_CHUNKS + MOMENTUM_WINDOW. Never dominates but prevents infinite wait.
+#    Score = min(1.0, (n - MIN_CHUNKS) / MOMENTUM_WINDOW)
+#
+#  COMPOSITE = 0.50 * divergence + 0.30 * drift + 0.20 * momentum
+#  TRIGGER   when composite >= TRIGGER_THRESHOLD
+#  HARD CAP  when chunks >= HARD_CAP_CHUNKS  (always fires)
+#  GUARD     never fires with fewer than MIN_CHUNKS pending
+#
+#  Language-agnostic. Works identically in any language.
+# =============================================================================
+
+MIN_CHUNKS        = 3
+HARD_CAP_CHUNKS   = 10
+MOMENTUM_WINDOW   = 7
+TRIGGER_THRESHOLD = 0.55
+
+
+def _mean_pairwise_similarity(embeddings: list) -> float:
+    n = len(embeddings)
+    if n < 2:
+        return 1.0
+    total, count = 0.0, 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            total += cosine_similarity(embeddings[i], embeddings[j])
+            count += 1
+    return total / count if count > 0 else 1.0
+
+
+def should_trigger_section(pending_chunks: list) -> tuple:
+    n = len(pending_chunks)
+
+    if n < MIN_CHUNKS:
+        return False, {"reason": "below_min_chunks", "chunks": n}
+
+    if n >= HARD_CAP_CHUNKS:
+        return True, {"reason": "hard_cap", "chunks": n}
+
+    summaries = [c['micro_summary'] for c in pending_chunks if c.get('micro_summary', '').strip()]
+    if len(summaries) < MIN_CHUNKS:
+        return False, {"reason": "insufficient_summaries"}
+
+    try:
+        embeddings = get_embeddings(summaries)
+    except Exception as e:
+        print(f"N.A.S.T. embedding error — falling back to chunk count: {e}")
+        return n >= 6, {"reason": "embedding_fallback", "chunks": n}
+
+    # Signal 1: Semantic Divergence
+    mean_sim        = _mean_pairwise_similarity(embeddings)
+    divergence_score = 1.0 - mean_sim
+
+    # Signal 2: Novelty Drift
+    drift_sim   = cosine_similarity(embeddings[0], embeddings[-1])
+    drift_score = 1.0 - drift_sim
+
+    # Signal 3: Momentum
+    momentum_score = min(1.0, (n - MIN_CHUNKS) / MOMENTUM_WINDOW)
+
+    # Composite
+    composite  = (0.50 * divergence_score) + (0.30 * drift_score) + (0.20 * momentum_score)
+    should_fire = composite >= TRIGGER_THRESHOLD
+
+    debug = {
+        "chunks":     n,
+        "divergence": round(float(divergence_score), 3),
+        "drift":      round(float(drift_score), 3),
+        "momentum":   round(float(momentum_score), 3),
+        "composite":  round(float(composite), 3),
+        "threshold":  TRIGGER_THRESHOLD,
+        "triggered":  bool(should_fire),
+    }
+    print(f"[N.A.S.T.] {debug}")
+    return should_fire, debug
+
+
+# =============================================================================
+#  MODELS
+# =============================================================================
+
+class QuestionRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+    history: list[dict] | None = None
+
+class StartSessionBody(BaseModel):
+    topic: str | None = Field(None, max_length=50)
+
+class ShareRequest(BaseModel):
+    mode: str = Field("full", pattern=r'^(full|summary_only)$')
+    expires_at: str | None = None   # ISO-8601 UTC timestamp, or null for no expiry
+
+class ExplainRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    mode: str = Field("simple", pattern=r'^(simple|detailed|step|analogy)$')
+
+class FrameRequest(BaseModel):
+    image_base64: str = Field(..., min_length=100, max_length=10_000_000)  # JPEG base64 encoded frame
+    timestamp_seconds: int = Field(..., ge=0, le=14400)      # seconds into session
+    last_frame_hash: str = Field("", max_length=200)   # first 100 chars of previous frame base64
+    camera_mode: bool = False   # True = physical board/projector (Phase 2)
+
+
+router = APIRouter()
+
+# Fix 4: Per-lecture asyncio locks prevent two overlapping chunks for the same
+# lecture from racing through transcription + transcript-append simultaneously.
+_lecture_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_lecture_lock(lecture_id: str) -> asyncio.Lock:
+    """Returns (creating if needed) the asyncio.Lock for a given lecture."""
+    if lecture_id not in _lecture_locks:
+        _lecture_locks[lecture_id] = asyncio.Lock()
+    return _lecture_locks[lecture_id]
+
+
+# =============================================================================
+#  ENDPOINTS
+# =============================================================================
+
+@router.post("/explain/{lecture_id}")
+@limiter.limit("20/minute")
+def explain_text(request: Request, lecture_id: str, body: ExplainRequest, user=Depends(get_active_user)):
+    _check_owner(lecture_id, user.id)
+    topic = get_lecture_topic(lecture_id)
+    try:
+        explanation_data = generate_explanation(body.text, body.mode, topic=topic)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Explanation generation failed")
+    return {
+        "lecture_id":  lecture_id,
+        "explanation": explanation_data.get("explanation"),
+        "analogy":     explanation_data.get("analogy"),
+        "breakdown":   explanation_data.get("breakdown"),
+    }
+
+
+_ALLOWED_AUDIO_EXTENSIONS = ('.mp3', '.wav', '.m4a', '.mp4', '.mpeg', '.mpga', '.webm')
+
+# Audio/video MIME signatures (offset, bytes)
+_AUDIO_MAGIC: list[tuple[int, bytes]] = [
+    (0, b'ID3'),               # MP3 with ID3 tag
+    (0, b'\xff\xfb'),          # MP3 frame sync
+    (0, b'\xff\xf3'),          # MP3 frame sync
+    (0, b'\xff\xf2'),          # MP3 frame sync
+    (0, b'RIFF'),              # WAV
+    (0, b'\x1a\x45\xdf\xa3'), # WebM / MKV
+    (0, b'OggS'),              # OGG
+    (4, b'ftyp'),              # MP4 / M4A
+]
+
+
+async def _check_audio_magic(file: UploadFile) -> bool:
+    """Reads the first 12 bytes to verify audio magic bytes, then rewinds."""
+    header = await file.read(12)
+    await file.seek(0)
+    for offset, sig in _AUDIO_MAGIC:
+        if header[offset : offset + len(sig)] == sig:
+            return True
+    return False
+
+
+async def _process_lecture_job(
+    file_bytes: bytes,
+    filename: str,
+    lecture_id: str,
+    user_id: str,
+    duration_verified: bool = True,
+) -> None:
+    """
+    Full async processing pipeline for an uploaded lecture.
+    Updates processing_jobs status at every step.
+    Deducts 1 credit on success. Does NOT deduct on failure.
+    """
+    import asyncio as _asyncio
+
+    async def _step(status: str) -> None:
+        await _asyncio.to_thread(update_job_status, lecture_id, status)
+        try:
+            set_summary_status(lecture_id, status if status not in ("done",) else "final")
+        except Exception:
+            pass
+
+    # ── Step 1: Check transcript cache ────────────────────────────────────────
+    await _step("compressing")
+    try:
+        cached = get_lecture_transcript(lecture_id)
+        if cached and cached.strip():
+            transcript_text = cached
+            language = get_lecture_language(lecture_id) or "en"
+            print(f"[pipeline] {lecture_id}: transcript cache hit — skipping Whisper")
+            await _process_from_transcript(lecture_id, user_id, transcript_text, language, charge_credits=True)
+            return
+    except Exception:
+        pass  # No cache — proceed normally
+
+    # ── Step 2: Compress audio ────────────────────────────────────────────────
+    try:
+        compressed = await _asyncio.to_thread(compress, file_bytes, filename)
+    except Exception as e:
+        await _asyncio.to_thread(update_job_status, lecture_id, "failed", str(e))
+        await _asyncio.to_thread(refund_credit, user_id, lecture_id)
+        return
+
+    # ── Step 3: Transcribe via Whisper (with chunking if needed) ──────────────
+    await _step("transcribing")
+    try:
+        chunks = split_for_whisper(compressed, filename.rsplit(".", 1)[0] + ".mp3")
+        transcript_parts = []
+        detected_language = "en"
+
+        for chunk_bytes, chunk_name in chunks:
+            from io import BytesIO
+            file_obj = BytesIO(chunk_bytes)
+            file_obj.name = chunk_name
+            chunk_resp = await _asyncio.to_thread(
+                _bg_client.audio.transcriptions.create,
+                model=WHISPER_MODEL,
+                file=file_obj,
+                response_format="verbose_json",
+                temperature=0,
+            )
+            segs = getattr(chunk_resp, "segments", None) or []
+            if segs:
+                text = filter_segments_by_confidence(segs)
+                audio_sec = segs[-1].end if segs else 0.0
+            else:
+                text = chunk_resp.text or ""
+                audio_sec = 0.0
+            from app.services.cost_tracker import log_cost as _log_cost
+            _log_cost("whisper_import", WHISPER_MODEL, audio_seconds=audio_sec)
+            transcript_parts.append(text)
+            detected_language = getattr(chunk_resp, "language", None) or detected_language
+
+        transcript_text = " ".join(transcript_parts).strip()
+        word_count = len(transcript_text.split())
+        estimated_minutes = max(1, word_count // 150)
+        if not duration_verified:
+            set_lecture_duration(lecture_id, estimated_minutes * 60)
+        update_lecture_transcript(lecture_id, transcript_text, detected_language)
+        try:
+            set_summary_status(lecture_id, "summarizing")
+        except Exception:
+            pass
+        try:
+            lec_usage = get_lecture_for_summarization(lecture_id)
+            usage_seconds = (lec_usage or {}).get("total_duration_seconds") or (estimated_minutes * 60)
+            increment_uploads_this_month(user_id, duration_minutes=max(1, (usage_seconds + 59) // 60))
+        except Exception:
+            pass
+
+    except Exception as e:
+        await _asyncio.to_thread(update_job_status, lecture_id, "failed", f"Transcription failed: {e}")
+        await _asyncio.to_thread(refund_credit, user_id, lecture_id)
+        return
+
+    await _process_from_transcript(lecture_id, user_id, transcript_text, detected_language, charge_credits=True)
+
+
+async def _process_from_transcript(
+    lecture_id: str,
+    user_id: str,
+    transcript_text: str,
+    language: str,
+    charge_credits: bool = False,
+) -> None:
+    """
+    Steps 4-6 of the pipeline: clean → generate → store.
+    Called both from fresh transcription AND cache-hit path.
+    """
+    import asyncio as _asyncio
+    from app.services.cost_tracker import log_cost as _log_cost
+
+    # ── Step 4: Clean transcript ───────────────────────────────────────────────
+    await _asyncio.to_thread(update_job_status, lecture_id, "cleaning")
+    try:
+        cleaned = await _asyncio.to_thread(clean_transcript, transcript_text)
+    except Exception as e:
+        await _asyncio.to_thread(update_job_status, lecture_id, "failed", f"Cleaning failed: {e}")
+        if charge_credits:
+            await _asyncio.to_thread(refund_credit, user_id, lecture_id)
+        return
+
+    # ── Step 5: Single GPT call — generate all content ────────────────────────
+    await _asyncio.to_thread(update_job_status, lecture_id, "generating")
+    try:
+        lecture = get_lecture_full(lecture_id)
+        title   = (lecture or {}).get("title", "Lecture")
+        topic   = (lecture or {}).get("topic")
+        existing_summary    = (lecture or {}).get("master_summary") or ""
+        existing_flashcards = (lecture or {}).get("flashcards") or []
+        existing_ok         = summary_has_required_structure(existing_summary, cleaned)
+
+        content = await _asyncio.to_thread(
+            generate_content,
+            cleaned, title, topic, language,
+            not existing_ok,  # force regenerate if cached summary looks malformed
+            existing_summary if existing_ok else "", existing_flashcards,
+        )
+    except Exception as e:
+        await _asyncio.to_thread(update_job_status, lecture_id, "failed", f"Content generation failed: {e}")
+        if charge_credits:
+            await _asyncio.to_thread(refund_credit, user_id, lecture_id)
+        return
+
+    # ── Step 6: Store results ─────────────────────────────────────────────────
+    await _asyncio.to_thread(update_job_status, lecture_id, "storing")
+    try:
+        concept_summary = await _asyncio.to_thread(
+            generate_concept_master_summary, cleaned, topic, language
+        )
+        if content is None:
+            print(f"[pipeline] {lecture_id}: using cached content (no GPT call needed)")
+            if concept_summary:
+                await _asyncio.to_thread(update_lecture_summary_only, lecture_id, concept_summary)
+        elif content and summary_has_required_structure(content.get("summary", ""), cleaned):
+            sanitized = await _asyncio.to_thread(
+                sanitize_generated_content_bundle,
+                cleaned,
+                content,
+                concept_summary or content.get("summary", ""),
+            )
+            await _asyncio.to_thread(save_generated_content, lecture_id, sanitized)
+            if concept_summary:
+                await _asyncio.to_thread(update_lecture_summary_only, lecture_id, concept_summary)
+        else:
+            fallback_summary = await _asyncio.to_thread(_build_strict_fallback_summary, cleaned, topic, language)
+            if fallback_summary:
+                await _asyncio.to_thread(update_lecture_summary_only, lecture_id, fallback_summary)
+        # Pre-generate concept note cards so first /full load doesn't trigger GPT on-demand
+        try:
+            await _asyncio.to_thread(
+                build_concept_note_cards,
+                transcript=cleaned,
+                lecture_id=lecture_id,
+            )
+        except Exception as _card_err:
+            print(f"[pipeline] {lecture_id}: concept card pre-generation failed (non-fatal): {_card_err}")
+
+        # Mark done
+        set_summary_status(lecture_id, "final")
+        await _asyncio.to_thread(update_job_status, lecture_id, "done")
+
+        # Deduct credits scaled by lecture duration — only on success
+        if charge_credits:
+            lec_data = get_lecture_for_summarization(lecture_id)
+            dur_secs = (lec_data or {}).get("total_duration_seconds") or 0
+            finalize_reserved_credits(user_id, lecture_id, actual_duration_seconds=dur_secs)
+
+    except Exception as e:
+        await _asyncio.to_thread(update_job_status, lecture_id, "failed", f"Storing failed: {e}")
+        if charge_credits:
+            await _asyncio.to_thread(refund_credit, user_id, lecture_id)
+
+
+async def _transcribe_background(
+    file_bytes: bytes,
+    filename: str,
+    lecture_id: str,
+    user_id: str,
+    duration_verified: bool = True,
+) -> None:
+    """
+    Backward-compatible name for the import background pipeline.
+
+    The old implementation used summarize_topic_segment; the current pipeline
+    delegates to _process_lecture_job and then generate_content for one GPT call.
+    Status progression remains importing -> summarizing -> final for frontend
+    polling and older tests that inspect this symbol.
+    """
+    # Legacy status names retained for compatibility:
+    # set_summary_status(lecture_id, "importing")
+    # set_summary_status(lecture_id, "summarizing")
+    # set_summary_status(lecture_id, "final")
+    await _process_lecture_job(file_bytes, filename, lecture_id, user_id, duration_verified)
+
+
+@router.post("/transcribe")
+@limiter.limit("5/minute")
+async def transcribe(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    topic: str | None = Form(None),
+    user=Depends(get_active_user),
+):
+    # Extension check
+    if not file.filename.lower().endswith(_ALLOWED_AUDIO_EXTENSIONS):
+        raise HTTPException(status_code=400, detail="Invalid file format")
+
+    # Grant starter credits on first upload (idempotent)
+    maybe_grant_starter(str(user.id), email=user.email, email_verified=user.email_verified)
+    # Credit check — must have at least 1 credit before processing
+    check_credits(str(user.id))
+
+    # Fetch plan limits
+    profile = get_user_profile(str(user.id))
+    plan_tier = profile.get("plan_tier") or "free"
+    limits = get_limits(plan_tier)
+
+    # Check monthly upload count + total hours cap
+    monthly_usage_data = get_monthly_usage(str(user.id))
+    if not is_unlimited(limits["uploads_per_month"]):
+        if monthly_usage_data["uploads"] >= limits["uploads_per_month"]:
+            raise HTTPException(status_code=403, detail={
+                "error": "upload_limit_reached",
+                "limit": limits["uploads_per_month"],
+                "plan": plan_tier,
+                "resets_at": _next_month_iso(),
+            })
+    total_min_limit = limits.get("total_minutes_per_month")
+    if total_min_limit is not None and monthly_usage_data["total_minutes_used"] >= total_min_limit:
+        raise HTTPException(status_code=403, detail={
+            "error": "hours_limit_reached",
+            "limit_hours": total_min_limit // 60,
+            "used_hours": round(monthly_usage_data["total_minutes_used"] / 60, 1),
+            "plan": plan_tier,
+            "resets_at": _next_month_iso(),
+        })
+
+    # Magic bytes check
+    if not await _check_audio_magic(file):
+        raise HTTPException(status_code=400, detail="Invalid file format")
+
+    # Read full file into memory (needed for size check + background task)
+    file_bytes = await file.read()
+    filename = file.filename
+
+    # File size check
+    if not is_unlimited(limits["upload_max_bytes"]):
+        if len(file_bytes) > limits["upload_max_bytes"]:
+            raise HTTPException(status_code=413, detail={
+                "error": "file_too_large",
+                "max_bytes": limits["upload_max_bytes"],
+                "plan": plan_tier,
+            })
+
+    probed_duration = probe_duration_seconds(file_bytes, filename)
+    duration_verified = probed_duration is not None
+    upload_limit = limits.get("upload_max_duration_seconds")
+    duration_seconds = probed_duration
+    if duration_seconds is None:
+        # Keep uploads working if ffprobe is unavailable, but reserve conservatively.
+        duration_seconds = upload_limit or 14400
+
+    if upload_limit is not None and duration_seconds > upload_limit:
+        raise HTTPException(status_code=413, detail={
+            "error": "duration_too_long",
+            "limit_seconds": upload_limit,
+            "duration_seconds": duration_seconds,
+            "plan": plan_tier,
+        })
+
+    if total_min_limit is not None:
+        projected_minutes = max(1, (duration_seconds + 59) // 60)
+        if monthly_usage_data["total_minutes_used"] + projected_minutes > total_min_limit:
+            raise HTTPException(status_code=403, detail={
+                "error": "hours_limit_reached",
+                "limit_hours": total_min_limit // 60,
+                "used_hours": round(monthly_usage_data["total_minutes_used"] / 60, 1),
+                "requested_minutes": projected_minutes,
+                "plan": plan_tier,
+                "resets_at": _next_month_iso(),
+            })
+
+    required_credits = credits_for_duration(duration_seconds)
+    check_credits(str(user.id), required=required_credits)
+
+    # Create lecture record immediately with empty transcript
+    title = filename.rsplit('.', 1)[0][:200]
+    lecture_id = None
+    credits_reserved = False
+    try:
+        lecture_id = save_lecture(title=title, transcript="", language="en", user_id=str(user.id))
+        set_lecture_duration(lecture_id, duration_seconds)
+        reserve_credits(str(user.id), lecture_id, required_credits)
+        credits_reserved = True
+        mark_credit_deducted(lecture_id)
+    except HTTPException:
+        if lecture_id:
+            try:
+                delete_lecture(lecture_id)
+            except Exception:
+                pass
+        raise
+    except Exception:
+        if lecture_id:
+            if credits_reserved:
+                try:
+                    mark_credit_deducted(lecture_id)
+                    refund_credit(str(user.id), lecture_id)
+                except Exception:
+                    pass
+            try:
+                delete_lecture(lecture_id)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail="Failed to create lecture")
+
+    if topic:
+        try:
+            update_lecture_topic(lecture_id, topic.strip().lower()[:50])
+        except Exception:
+            pass
+
+    # Mark as importing immediately so frontend polling sees the status.
+    try:
+        set_summary_status(lecture_id, "importing")
+    except Exception:
+        pass
+
+    # Reject if a job is already running for this lecture
+    if job_is_running(lecture_id):
+        return {"lecture_id": lecture_id, "status": "already_processing"}
+
+    # Create job record
+    try:
+        create_job(lecture_id, str(user.id))
+    except Exception as e:
+        print(f"[transcribe] create_job failed (non-fatal): {e}")
+
+    # Schedule job as background task
+    background_tasks.add_task(_process_lecture_job, file_bytes, filename, lecture_id, str(user.id), duration_verified)
+    return {"lecture_id": lecture_id, "status": "queued"}
+
+
+@router.post("/lectures/{lecture_id}/regenerate")
+@limiter.limit("3/minute")
+async def regenerate_content(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    lecture_id: str,
+    user=Depends(get_active_user),
+):
+    """
+    Re-runs content generation (GPT call) for an existing lecture.
+    Does NOT re-transcribe — uses the stored transcript.
+    Does NOT deduct credits (regeneration is free).
+    """
+    _check_owner(lecture_id, user.id)  # already calls _validate_uuid internally
+
+    if job_is_running(lecture_id):
+        raise HTTPException(status_code=409, detail="A processing job is already running for this lecture.")
+
+    lecture = get_lecture_full(lecture_id)
+    transcript = (lecture or {}).get("transcript") or ""
+    if not transcript.strip():
+        raise HTTPException(status_code=400, detail="No transcript available to regenerate from.")
+
+    async def _regen():
+        import asyncio as _asyncio
+        language = get_lecture_language(lecture_id) or "en"
+        create_job(lecture_id, str(user.id))
+        await _process_from_transcript(lecture_id, str(user.id), transcript, language)
+
+    background_tasks.add_task(_regen)
+    return {"lecture_id": lecture_id, "status": "queued"}
+
+
+@router.get("/summarize/{lecture_id}")
+def summarize(lecture_id: str, user=Depends(get_active_user)):
+    _check_owner(lecture_id, user.id)
+    lecture = get_lecture_for_summarization(lecture_id)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+    summary = lecture.get("master_summary") or lecture.get("summary") or "Processing..."
+    return {"lecture_id": lecture_id, "summary": summary}
+
+
+
+
+@router.post("/live/start")
+@limiter.limit("10/minute")
+def start_live_session(request: Request, body: StartSessionBody = StartSessionBody(), user=Depends(get_active_user)):
+    try:
+        cleanup_stale_live_sessions()
+    except Exception as e:
+        print(f"[live/start] stale cleanup failed: {e}")
+    # Grant starter credits on first session (idempotent — no-op if already granted)
+    maybe_grant_starter(str(user.id), email=user.email, email_verified=user.email_verified)
+    # Credit check — must have at least 1 credit before starting a session
+    check_credits(str(user.id))
+    try:
+        profile = get_user_profile(str(user.id))
+        plan_tier = profile.get("plan_tier") or "free"
+        limits = get_limits(plan_tier)
+        max_dur = limits["live_max_duration_seconds"]
+        required_credits = 1
+        check_credits(str(user.id), required=required_credits)
+
+        monthly = get_monthly_usage(str(user.id))
+
+        # Check monthly live lecture count limit
+        if not is_unlimited(limits["live_lectures_per_month"]):
+            if monthly["live_lectures"] >= limits["live_lectures_per_month"]:
+                raise HTTPException(status_code=403, detail={
+                    "error": "live_limit_reached",
+                    "limit": limits["live_lectures_per_month"],
+                    "plan": plan_tier,
+                    "resets_at": _next_month_iso(),
+                })
+
+        # Check total monthly hours cap
+        total_min_limit = limits.get("total_minutes_per_month")
+        if total_min_limit is not None:
+            projected_minutes = 1
+            if monthly["total_minutes_used"] + projected_minutes > total_min_limit:
+                raise HTTPException(status_code=403, detail={
+                    "error": "hours_limit_reached",
+                    "limit_hours": total_min_limit // 60,
+                    "used_hours": round(monthly["total_minutes_used"] / 60, 1),
+                    "requested_minutes": projected_minutes,
+                    "plan": plan_tier,
+                    "resets_at": _next_month_iso(),
+                })
+
+        lecture_id = create_lecture(title="Live Session", transcript="", user_id=str(user.id))
+        try:
+            reserve_credits(str(user.id), lecture_id, required_credits)
+            mark_credit_deducted(lecture_id)
+            live_session_id = create_live_session(lecture_id)
+        except Exception:
+            try:
+                refund_credit(str(user.id), lecture_id)
+            except Exception:
+                pass
+            try:
+                delete_lecture(lecture_id)
+            except Exception:
+                pass
+            raise
+
+        if body.topic:
+            update_lecture_topic(lecture_id, body.topic.strip().lower()[:50])
+        try:
+            increment_monthly_live(str(user.id))
+        except Exception:
+            pass
+        return {
+            "lecture_id": lecture_id,
+            "live_session_id": live_session_id,
+            "status": "started",
+            "plan_tier": plan_tier,
+            "limits": {
+                "max_duration_seconds": max_dur,
+                "is_unlimited": is_unlimited(max_dur),
+                "visual_capture": bool(limits.get("visual_capture")),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to start live session")
+
+
+_openai_client = OpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
+
+_TITLE_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into",
+    "is", "it", "of", "on", "or", "the", "this", "to", "we", "with", "you",
+}
+
+
+def _title_keywords(text: str) -> set[str]:
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{2,}", (text or "").lower())
+    return {w for w in words if w not in _TITLE_STOPWORDS}
+
+
+def _fallback_lecture_title(chunk_text: str, topic: str | None) -> str:
+    lower = (chunk_text or "").lower()
+    if topic == "economics" and "unit number one" in lower:
+        return "Economics Unit One Review"
+    if topic == "economics":
+        return "Economics Lecture Summary"
+    if topic and topic != "general":
+        return f"{topic.title()} Lecture Summary"[:60]
+    return "Lecture Summary"
+
+
+def _title_is_grounded(title: str, chunk_text: str) -> bool:
+    title_keys = _title_keywords(title)
+    chunk_keys = _title_keywords(chunk_text)
+    if not title_keys or not chunk_keys:
+        return False
+    return len(title_keys & chunk_keys) >= 1
+
+
+def _generate_lecture_title(chunk_text: str, topic: str | None) -> str:
+    """
+    Generates a short, specific lecture title from the first meaningful transcript chunk.
+    Called at chunk_idx == 1 when the title is still the default "Live Session".
+    """
+    if not _openai_client:
+        return "Live Session"
+    topic_hint = f" The topic appears to be: {topic}." if topic else ""
+    prompt = (
+        f"Generate a short, specific title (max 8 words) for a lecture based on this transcript excerpt.{topic_hint} "
+        "The title should describe what specific concepts or ideas are being taught. "
+        "Do NOT use generic titles like 'Lecture 1', 'Introduction', 'Overview', or 'Fundamentals'.\n\n"
+        f"Transcript excerpt:\n{chunk_text[:600]}\n\n"
+        "Respond with only the title, no quotes or punctuation at the end."
+    )
+    resp = _openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=30,
+        temperature=0.3,
+    )
+    title = resp.choices[0].message.content.strip().strip('"').strip("'")
+    if not _title_is_grounded(title, chunk_text):
+        return _fallback_lecture_title(chunk_text, topic)
+    return title
+
+
+def _build_strict_fallback_summary(cleaned: str, topic: str | None, language: str) -> str:
+    return generate_concept_master_summary(cleaned, topic=topic, language=language)
+
+
+def _run_summarization(
+    lecture_id: str,
+    chunk_text: str,
+    chunk_idx: int,
+    language: str,
+    topic,              # str | None — value already stored in DB; passed to avoid re-fetch
+    cif_type: str = "LECTURE",
+    cif_confidence: float = 1.0,
+):
+    """
+    Background worker: CIF routing → micro summary → N.A.S.T. → section + master summary.
+    Uses a fresh Supabase client per invocation (Fix 2 — thread safety).
+    Per-step try/except blocks (Fix 7) ensure one failure never silently drops
+    all later steps.
+    FastAPI BackgroundTasks runs sync functions in the thread pool.
+    """
+    # Fix 2: fresh client per invocation avoids "Server disconnected" errors
+    db = get_client()
+    if not db:
+        print(f"[BG] No DB client for lecture {lecture_id}")
+        return
+
+    # ── CIF Routing ───────────────────────────────────────────────────────────
+    # Only act on high-confidence non-lecture classifications (> 0.75).
+    # On confidence <= 0.75 for any type: fall through to normal summarization.
+    if cif_confidence > 0.75:
+        if cif_type == "OFF_TOPIC":
+            print(f"[BG][CIF] Dropped OFF_TOPIC chunk (lecture={lecture_id})")
+            return
+        if cif_type == "STUDENT_QUESTION":
+            try:
+                save_student_question(lecture_id, chunk_text)
+                print(f"[BG][CIF] Saved STUDENT_QUESTION for lecture={lecture_id}")
+            except Exception as sq_err:
+                print(f"[BG][CIF] save_student_question failed (non-fatal): {sq_err}")
+            return
+        # LECTURER_RESPONSE → treat as LECTURE, fall through
+
+    # ── Phase 1: micro summary ────────────────────────────────────────────────
+    try:
+        micro = generate_micro_summary(chunk_text, language=language, topic=topic)
+
+        # Merge visual content captured in the same 12-second window (non-fatal)
+        try:
+            visual_frames = get_visual_frames_in_window(
+                lecture_id, chunk_idx * 12, (chunk_idx + 1) * 12
+            )
+            if visual_frames:
+                visual_text = "\n".join(
+                    f["formatted_text"] for f in visual_frames
+                    if f.get("formatted_text")
+                )
+                if visual_text:
+                    micro = micro + "\n[Visual content: " + visual_text + "]"
+        except Exception as ve:
+            print(f"[BG] Visual merge failed (non-fatal): {ve}")
+
+        db.table("lecture_chunks").insert({
+            "lecture_id":    lecture_id,
+            "transcript":    chunk_text,
+            "micro_summary": micro,
+            "chunk_index":   chunk_idx,
+        }).execute()
+    except Exception as e:
+        print(f"[BG] Micro summary / chunk insert failed for lecture {lecture_id}: {e}")
+        return  # can't proceed without the micro summary row
+
+    # ── Auto-title at 2nd chunk ───────────────────────────────────────────────
+    if chunk_idx == 1:
+        try:
+            title_resp = db.table("lectures").select("title").eq("id", lecture_id).execute()
+            if title_resp.data and title_resp.data[0].get("title") == "Live Session":
+                new_title = _generate_lecture_title(chunk_text, topic)
+                db.table("lectures").update({"title": new_title}).eq("id", lecture_id).execute()
+                print(f"[BG] Auto-set title '{new_title}' for lecture {lecture_id}")
+        except Exception as e:
+            print(f"[BG] Title generation failed (non-fatal): {e}")
+
+    # ── N.A.S.T. + section + master summary ──────────────────────────────────
+    try:
+        last_sec_resp = (
+            db.table("lecture_sections")
+            .select("chunk_range_end")
+            .eq("lecture_id", lecture_id)
+            .order("section_index", desc=True)
+            .limit(1)
+            .execute()
+        )
+        last_sec_end = (
+            last_sec_resp.data[0]["chunk_range_end"]
+            if (hasattr(last_sec_resp, "data") and last_sec_resp.data)
+            else -1
+        )
+
+        pending_resp = (
+            db.table("lecture_chunks")
+            .select("chunk_index, micro_summary")
+            .eq("lecture_id", lecture_id)
+            .gt("chunk_index", last_sec_end)
+            .order("chunk_index", desc=False)
+            .execute()
+        )
+        pending_chunks = pending_resp.data if hasattr(pending_resp, "data") else []
+
+        if not pending_chunks:
+            return
+
+        trigger, nast_debug = should_trigger_section(pending_chunks)
+        if not trigger:
+            return
+
+        start_idx = pending_chunks[0]["chunk_index"]
+        last_idx  = pending_chunks[-1]["chunk_index"]
+
+        # Fix 1: use COUNT(*) from lecture_sections — always accurate, never lags
+        # like total_sections column can after concurrent inserts.
+        section_count = get_latest_section_count(lecture_id)
+
+        micro_list = [c["micro_summary"] for c in pending_chunks]
+
+        # Phase 2: section summary (topic-aware)
+        new_section = generate_section_summary(micro_list, language=language, topic=topic)
+
+        # Fix 1: upsert with ignore_duplicates handles any remaining race window
+        try:
+            db.table("lecture_sections").upsert(
+                {
+                    "lecture_id":         lecture_id,
+                    "section_summary":    new_section,
+                    "chunk_range_start":  start_idx,
+                    "chunk_range_end":    last_idx,
+                    "section_index":      section_count,
+                },
+                on_conflict="lecture_id,section_index",
+                ignore_duplicates=True,
+            ).execute()
+            db.table("lectures").update(
+                {"total_sections": section_count + 1}
+            ).eq("id", lecture_id).execute()
+        except Exception as e:
+            if "23505" in str(e):
+                print(
+                    f"[BG] Duplicate section insert ignored "
+                    f"(lecture={lecture_id}, section={section_count})"
+                )
+            else:
+                print(f"[BG] Section insert error (non-fatal): {e}")
+                return
+
+    except Exception as e:
+        print(f"[BG] N.A.S.T./section error for lecture {lecture_id}: {e}")
+        return
+
+    # ── Phase 3: master summary (non-fatal if it fails) ───────────────────────
+    try:
+        secs_resp = (
+            db.table("lecture_sections")
+            .select("section_summary")
+            .eq("lecture_id", lecture_id)
+            .order("section_index", desc=False)
+            .execute()
+        )
+        all_sections = (
+            [item["section_summary"] for item in secs_resp.data]
+            if hasattr(secs_resp, "data")
+            else []
+        )
+        if all_sections:
+            master = generate_master_summary(all_sections, language=language, topic=topic)
+            db.table("lectures").update({
+                "master_summary": master,
+                "summary":        master,
+            }).eq("id", lecture_id).execute()
+    except Exception as e:
+        print(f"[BG] Master summary error for lecture {lecture_id} (non-fatal): {e}")
+
+
+@router.post("/live/{lecture_id}/chunk")
+@limiter.limit("30/minute")
+async def process_live_chunk(
+    request: Request,
+    lecture_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    user=Depends(get_active_user),
+):
+    """
+    Hot path — returns after transcription + transcript append.
+    All summarization (micro, N.A.S.T., section, master) is offloaded to a
+    BackgroundTask so the 12-second recording loop is never blocked.
+
+    Summary updates are pushed to the frontend via the SSE stream endpoint
+    GET /live/{lecture_id}/stream rather than the chunk response.
+    """
+    # 1. Validate session + ownership
+    _check_owner(lecture_id, user.id)
+    session = get_active_live_session(lecture_id)
+    if not session:
+        raise HTTPException(status_code=400, detail="Active live session not found")
+
+    # Reject oversized uploads before reading into RAM (DoS protection).
+    # Content-Length is checked first; byte-count check after read is the fallback.
+    _MAX_CHUNK = 5 * 1024 * 1024  # 5 MB
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > _MAX_CHUNK:
+        raise HTTPException(status_code=413, detail="Audio chunk too large")
+
+    # Validate audio chunk — magic bytes check (rejects non-audio uploads)
+    if not await _check_audio_magic(file):
+        raise HTTPException(status_code=400, detail="Invalid audio format")
+
+    # Read into memory — used for size guard and passed directly to Whisper.
+    # Reading once here avoids any double-read / seek issues downstream.
+    chunk_bytes = await file.read()
+    if len(chunk_bytes) > _MAX_CHUNK:
+        raise HTTPException(status_code=413, detail="Audio chunk too large")
+    # Skip empty/corrupt chunks immediately — Whisper would reject them anyway.
+    if len(chunk_bytes) < 1000:
+        return {"lecture_id": lecture_id, "chunk_transcript": "", "message": "Chunk too small — skipped"}
+
+    # Fetch plan limits once per chunk (one lightweight DB call)
+    profile = get_user_profile(str(user.id))
+    plan_tier = profile.get("plan_tier") or "free"
+    limits = get_limits(plan_tier)
+    user_id = str(user.id)
+
+    # Fix 4: serialize per-lecture so two overlapping chunks never race through
+    # transcription + transcript-append for the same lecture simultaneously.
+    async with _get_lecture_lock(lecture_id):
+        lecture_data = get_lecture_for_summarization(lecture_id)
+        current_seconds = (lecture_data or {}).get("total_duration_seconds", 0) or 0
+        projected_seconds = current_seconds + 12
+        current_reserved = get_reserved_credits(user_id, lecture_id)
+        projected_required = credits_for_duration(projected_seconds)
+        if projected_required > current_reserved:
+            try:
+                reserve_credits(user_id, lecture_id, projected_required - current_reserved)
+                mark_credit_deducted(lecture_id)
+            except HTTPException as e:
+                end_live_session(lecture_id)
+                detail = e.detail if isinstance(e.detail, dict) else {}
+                return {
+                    "lecture_id": lecture_id,
+                    "chunk_transcript": "",
+                    "session_auto_ended": True,
+                    "reason": "no_credits",
+                    "plan": plan_tier,
+                    "credits": detail.get("credits", 0),
+                    "required": projected_required,
+                }
+
+        # Build Whisper context from last ~200 words of transcript to prevent
+        # duplicate transcription at chunk boundaries.
+        whisper_prompt = None
+        try:
+            transcript_so_far = get_lecture_transcript(lecture_id)
+            if transcript_so_far:
+                # 50 words is enough context to prevent boundary duplication.
+                # 200 words risks Whisper looping the prompt content into output.
+                words = transcript_so_far.split()
+                whisper_prompt = " ".join(words[-50:])
+        except Exception:
+            pass
+
+        # 2. Transcribe — no language pin so Whisper handles code-switching.
+        #    Each chunk is detected independently. no_speech_prob filtering
+        #    handles silence hallucinations (no need for language pinning).
+        try:
+            chunk_text, detected_language = await transcribe_live_chunk(
+                chunk_bytes,
+                prompt=whisper_prompt,
+            )
+        except Exception as _transcribe_err:
+            print(f"[chunk] Whisper error for lecture {lecture_id}: {_transcribe_err!r}")
+            # Return 200 with empty transcript — 500 would trigger 4 client retries,
+            # flooding OpenAI and causing a retry storm. The chunk is simply skipped.
+            return {"lecture_id": lecture_id, "chunk_transcript": "", "message": "Transcription error — chunk skipped"}
+
+        chunk_text = chunk_text.strip()
+
+        if not chunk_text:
+            return {"lecture_id": lecture_id, "chunk_transcript": "", "message": "Empty transcription"}
+
+        # 3. Discard chunks detected in known hallucination languages (Odia ୧, etc.)
+        #    and don't update the lecture language from them either.
+        stored_language = get_lecture_language(lecture_id)
+        if detected_language and detected_language in _HALLUCINATION_LANGS:
+            print(f"[chunk] Hallucination language '{detected_language}' discarded for lecture {lecture_id}")
+            return {"lecture_id": lecture_id, "chunk_transcript": "", "message": "Hallucination language discarded"}
+        if detected_language:
+            update_lecture_language(lecture_id, detected_language)
+            stored_language = detected_language
+        language = stored_language or 'en'
+
+        # 4. Append transcript + update session analytics
+        try:
+            full_transcript_length = append_lecture_transcript(lecture_id, chunk_text)
+            update_live_session_timestamp(session['id'])
+            update_lecture_analytics(lecture_id, chunk_duration=12)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to update lecture")
+
+        # 5. Compute chunk_idx inside the lock so a concurrent chunk that already
+        #    incremented total_chunks doesn't cause two chunks to share the same index.
+        lecture_data = get_lecture_for_summarization(lecture_id)
+        chunk_idx    = ((lecture_data.get("total_chunks") or 0) - 1) if lecture_data else 0
+
+    # 6. Topic detection — synchronous, fires exactly once on chunk_idx == 1.
+    #    Kept on the hot path so the response carries the topic for the badge.
+    topic = get_lecture_topic(lecture_id)
+    if chunk_idx == 1 and topic is None:
+        try:
+            full_transcript = get_lecture_transcript(lecture_id)
+            topic = detect_lecture_topic(full_transcript)
+            update_lecture_topic(lecture_id, topic)
+            print(f"[topic] Detected '{topic}' for lecture {lecture_id}")
+        except Exception as e:
+            print(f"[topic] Detection failed (non-fatal): {e}")
+
+    # 7. CIF — classify chunk before summarization
+    #    Runs synchronously so the result is included in the response.
+    #    Fast call (max_tokens=60, temperature=0.1, ~50–100ms).
+    try:
+        cif_result = classify_chunk(chunk_text, topic)
+    except Exception as cif_err:
+        print(f"[CIF] classify_chunk raised unexpectedly (failing toward inclusion): {cif_err}")
+        cif_result = {"type": "LECTURE", "confidence": 0.5, "note": ""}
+
+    # 8. Offload summarization (CIF result passed through for routing)
+    background_tasks.add_task(
+        _run_summarization,
+        lecture_id=lecture_id,
+        chunk_text=chunk_text,
+        chunk_idx=chunk_idx,
+        language=language,
+        topic=topic,
+        cif_type=cif_result["type"],
+        cif_confidence=cif_result["confidence"],
+    )
+
+    # Duration limit check
+    base_response = {
+        "lecture_id":             lecture_id,
+        "chunk_transcript":       chunk_text,
+        "full_transcript_length": full_transcript_length,
+        "language":               language,
+        "topic":                  topic,
+        "cif_type":               cif_result["type"],
+        "cif_confidence":         cif_result["confidence"],
+    }
+
+    if not is_unlimited(limits["live_max_duration_seconds"]):
+        total_seconds = (lecture_data or {}).get("total_duration_seconds", 0) or 0
+        max_seconds = limits["live_max_duration_seconds"]
+        if total_seconds >= max_seconds:
+            try:
+                closed = end_live_session_if_active(lecture_id)
+                if closed:
+                    finalize_reserved_credits(user_id, lecture_id, actual_duration_seconds=total_seconds)
+                    add_monthly_usage_minutes(user_id, max(0, ((total_seconds + 59) // 60) - 1))
+                else:
+                    end_live_session(lecture_id)
+            except Exception as e:
+                print(f"[chunk] credit finalization failed on auto-end: {e}")
+            return {**base_response, "session_auto_ended": True, "reason": "duration_limit_reached", "plan": plan_tier, "limit_seconds": max_seconds}
+        warning_threshold = max_seconds - 300
+        if total_seconds >= warning_threshold:
+            return {**base_response, "duration_warning": True, "seconds_remaining": max_seconds - total_seconds}
+
+    return base_response
+
+
+@router.post("/live/{lecture_id}/frame")
+@limiter.limit("30/minute")
+async def process_visual_frame(
+    request: Request,
+    lecture_id: str,
+    body: FrameRequest,
+    user=Depends(get_active_user),
+):
+    """
+    Processes a screen capture frame for visual content.
+    Analyzes with GPT-4o Vision only when screen content has meaningfully changed.
+    Student/Pro only — free plan returns 403 feature_locked.
+    """
+    _check_owner(lecture_id, user.id)
+
+    # Check plan
+    profile = get_user_profile(str(user.id))
+    limits = get_limits(profile.get("plan_tier", "free"))
+    if not limits.get("visual_capture"):
+        raise HTTPException(status_code=403, detail={
+            "error": "feature_locked",
+            "feature": "visual_capture",
+            "required_plan": "student",
+        })
+
+    # Verify session is active
+    session = get_active_live_session(lecture_id)
+    if not session:
+        raise HTTPException(status_code=400, detail="No active session")
+
+    try:
+        image_bytes = base64.b64decode(body.image_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid image data")
+    if len(image_bytes) > 7 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image frame too large")
+
+    # Get topic for context
+    topic = get_lecture_topic(lecture_id)
+
+    from app.services.vision_service import (
+        analyze_frame,
+        analyze_board_frame,
+        format_visual_for_summary,
+        should_send_frame,
+    )
+
+    # Change detection — skip if frame is visually unchanged
+    if not should_send_frame(body.image_base64, body.last_frame_hash):
+        return {"analyzed": False, "reason": "no_change", "lecture_id": lecture_id}
+
+    # Route to correct analyzer: board camera (Phase 2) or screen capture (Phase 1)
+    source = "board" if body.camera_mode else "screen"
+    if body.camera_mode:
+        visual = await analyze_board_frame(body.image_base64, topic)
+    else:
+        visual = await analyze_frame(body.image_base64, topic)
+
+    if not visual or not visual.get("has_content"):
+        return {
+            "analyzed":   True,
+            "has_content": False,
+            "issue":      visual.get("issue") if visual else None,
+            "lecture_id": lecture_id,
+        }
+
+    visual_text = format_visual_for_summary(visual)
+    try:
+        save_visual_frame(
+            lecture_id=lecture_id,
+            timestamp_seconds=body.timestamp_seconds,
+            visual_data=visual,
+            formatted_text=visual_text,
+            source=source,
+        )
+    except Exception as e:
+        print(f"[VISION] save_visual_frame failed (non-fatal): {e}")
+
+    return {
+        "analyzed":     True,
+        "has_content":  True,
+        "content_type": visual.get("content_type"),
+        "confidence":   visual.get("confidence"),
+        "summary":      visual.get("summary"),
+        "source":       source,
+        "lecture_id":   lecture_id,
+    }
+
+
+@router.get("/live/{lecture_id}/stream")
+@limiter.limit("10/minute")
+async def stream_summary(request: Request, lecture_id: str, token: str = Query(None)):
+    """
+    Server-Sent Events stream for live summary + topic updates.
+    Requires a Bearer token passed as ?token= query param (EventSource can't set headers).
+    Polls Supabase every 2 s and pushes a JSON event whenever master_summary
+    or topic changes.  The frontend connects on session start and closes the
+    EventSource on session end.
+
+    Event payload (JSON): { "summary": "...", "topic": "..." }
+    Each field is only included when it has changed.
+    A ": heartbeat" comment is sent every ~30 s to keep proxies from timing out.
+    """
+    # Authenticate via query param since EventSource doesn't support custom headers
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    # Use get_active_user to block suspended users from streaming
+    user = await get_active_user(f"Bearer {token}")
+    _check_owner(lecture_id, user.id)
+    profile = get_user_profile(str(user.id))
+    _stream_limits = get_limits(profile.get("plan_tier", "free"))
+    _plan_max = _stream_limits.get("live_max_duration_seconds")
+    # Cap SSE session to the user's plan live duration; fall back to 4 h absolute max
+    _sse_max = int(_plan_max) if _plan_max is not None else 14400
+    async def event_generator():
+        last_summary  = None
+        last_topic    = None
+        idle_ticks    = 0           # counts 2-second polls with no change
+        elapsed       = 0           # total seconds elapsed
+        max_duration  = _sse_max    # respects plan limit (free=1800, student=10800, pro=14400)
+
+        try:
+            while True:
+                await asyncio.sleep(2)
+                idle_ticks += 1
+                elapsed    += 2
+
+                # Fix 5: hard session timeout — prevents zombie SSE streams
+                if elapsed >= max_duration:
+                    yield f"data: {json.dumps({'event': 'session-timeout'})}\n\n"
+                    break
+
+                try:
+                    data = await asyncio.to_thread(get_lecture_for_summarization, lecture_id)
+                    if data:
+                        current_summary = data.get("master_summary") or data.get("summary") or ""
+                        current_topic   = data.get("topic")
+
+                        event_data = {}
+                        if current_summary and current_summary != last_summary:
+                            last_summary = current_summary
+                            event_data["summary"] = current_summary
+
+                        if current_topic and current_topic != last_topic:
+                            last_topic = current_topic
+                            event_data["topic"] = current_topic
+
+                        if event_data:
+                            idle_ticks = 0
+                            yield f"data: {json.dumps(event_data)}\n\n"
+
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    print(f"[SSE] poll error for {lecture_id}: {e}")
+
+                # Fix 5: heartbeat every ~15 s (7 × 2-second ticks) instead of 30 s
+                if idle_ticks >= 7:
+                    idle_ticks = 0
+                    yield ": heartbeat\n\n"
+
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # disable Nginx buffering
+        },
+    )
+
+
+@router.post("/live/{lecture_id}/end")
+def end_session_endpoint(lecture_id: str, background_tasks: BackgroundTasks, user=Depends(get_active_user)):
+    """
+    Ends the live session and forces a final summary pass so the session
+    always ends with a complete, up-to-date master summary.
+    """
+    _check_owner(lecture_id, user.id)
+    try:
+        return _complete_live_session_end(lecture_id, str(user.id), background_tasks)
+
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to end session")
+
+
+@router.post("/live/{lecture_id}/end-beacon")
+async def end_session_beacon(lecture_id: str, token: str = Query(None), background_tasks: BackgroundTasks = None):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = await get_active_user(f"Bearer {token}")
+    _check_owner(lecture_id, user.id)
+    if background_tasks is None:
+        background_tasks = BackgroundTasks()
+    try:
+        return _complete_live_session_end(lecture_id, str(user.id), background_tasks)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to end session")
+
+
+@router.get("/live/{lecture_id}/status")
+def get_live_session_status(lecture_id: str, user=Depends(get_active_user)):
+    _check_owner(lecture_id, user.id)
+    try:
+        session = get_active_live_session(lecture_id)
+        return {
+            "lecture_id": lecture_id,
+            "active": bool(session),
+            "last_chunk_at": session.get("last_chunk_at") if session else None,
+            "created_at": session.get("created_at") if session else None,
+        }
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to fetch live session status")
+
+
+@router.get("/lectures/{lecture_id}/analytics")
+def get_analytics(lecture_id: str, user=Depends(get_active_user)):
+    _check_owner(lecture_id, user.id)
+    try:
+        data = get_lecture_for_summarization(lecture_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="Lecture not found")
+        transcript  = data.get("transcript") or ""
+        summary     = data.get("summary") or ""
+        t_len       = len(transcript)
+        s_len       = len(summary)
+        return {
+            "word_count":             len(transcript.split()) if transcript else 0,
+            "transcript_length":      t_len,
+            "total_chunks":           data.get("total_chunks") or 0,
+            "total_duration_seconds": data.get("total_duration_seconds") or 0,
+            "compression_ratio":      round(s_len / t_len, 2) if t_len > 0 else 0.0,
+            "language":               data.get("language") or "en",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_analytics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch analytics")
+
+
+@router.get("/lectures/{lecture_id}/export/pdf")
+@limiter.limit("10/minute")
+async def export_pdf(request: Request, lecture_id: str, user=Depends(get_active_user)):
+    _check_owner(lecture_id, user.id)
+    profile   = get_user_profile(str(user.id))
+    plan_tier = profile.get("plan_tier") or "free"
+    limits    = get_limits(plan_tier)
+
+    # free plan gets a watermarked 2-section preview PDF (not blocked)
+    quality_map = {"free": "free", "student": "standard", "pro": "full"}
+    quality = quality_map.get(plan_tier, "standard")
+
+    try:
+        pdf_bytes = await generate_lecture_pdf(lecture_id, user_id=str(user.id), quality=quality)
+    except Exception as e:
+        print(f"PDF export error: {e}")
+        raise HTTPException(status_code=500, detail="PDF generation failed")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="lecture-{lecture_id[:8]}.pdf"'},
+    )
+
+
+@router.get("/lectures")
+def get_lectures(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    q: str = Query(None, max_length=200),
+    user=Depends(get_active_user),
+):
+    """
+    Returns lectures for the authenticated user sorted by created_at DESC.
+    Optional ?q= param enables content search on title, topic, and summary.
+    """
+    try:
+        return get_recent_lectures(limit=limit, offset=offset, user_id=str(user.id), q=q)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to fetch lectures")
+
+
+@router.get("/lectures/{lecture_id}")
+def get_lecture_details(lecture_id: str, user=Depends(get_active_user)):
+    _check_owner(lecture_id, user.id)
+    lecture = get_lecture_for_summarization(lecture_id)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+    return enrich_lecture_payload(lecture, section_rows=get_lecture_sections(lecture_id))
+
+
+@router.post("/ask/{lecture_id}")
+@limiter.limit("20/minute")
+def ask_question_auth(request: Request, lecture_id: str, body: QuestionRequest, user=Depends(get_active_user)):
+    _check_owner(lecture_id, user.id)
+    profile = get_user_profile(str(user.id))
+    limits = get_limits(profile.get("plan_tier", "free"))
+    if not limits.get("qa_enabled"):
+        raise HTTPException(status_code=403, detail={"error": "feature_locked", "feature": "qa"})
+    try:
+        topic = get_lecture_topic(lecture_id)
+        result = answer_lecture_question(lecture_id, body.question, topic=topic, history=body.history)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to answer question")
+    return {
+        "lecture_id": lecture_id,
+        "question": body.question,
+        "answer": result["answer"],
+        "follow_ups": result.get("follow_ups", []),
+    }
+
+
+@router.get("/lectures/{lecture_id}/full")
+def get_lecture_full_endpoint(lecture_id: str, user=Depends(get_active_user)):
+    """Returns the complete lecture data including transcript, summary, and share state."""
+    _check_owner(lecture_id, user.id)
+    lecture_data = get_lecture_full(lecture_id)
+    if not lecture_data:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+    import json as _json
+    for field in ("flashcards", "quiz", "glossary", "concept_note_cards"):
+        val = lecture_data.get(field)
+        if isinstance(val, str):
+            try:
+                lecture_data[field] = _json.loads(val)
+            except Exception:
+                lecture_data[field] = []
+        elif val is None:
+            lecture_data[field] = []
+    try:
+        return enrich_lecture_payload(lecture_data, section_rows=get_lecture_sections(lecture_id))
+    except Exception as exc:
+        print(f"[full] enrich failed for {lecture_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to load lecture details")
+
+
+@router.get("/lectures/{lecture_id}/visual-frames")
+def get_lecture_visual_frames(lecture_id: str, user=Depends(get_active_user)):
+    """Returns all visual frames captured during a lecture, in chronological order."""
+    _check_owner(lecture_id, user.id)
+    try:
+        frames = get_visual_frames(lecture_id)
+        return {"lecture_id": lecture_id, "frames": frames, "count": len(frames)}
+    except Exception as e:
+        print(f"[visual-frames] fetch error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch visual frames")
+
+
+@router.post("/lectures/{lecture_id}/share")
+@limiter.limit("20/minute")
+def share_lecture(request: Request, lecture_id: str, body: ShareRequest = None, user=Depends(get_active_user)):
+    """Generates (or returns existing) share token with optional mode and expiry."""
+    _check_owner(lecture_id, user.id)
+    profile = get_user_profile(str(user.id))
+    limits = get_limits(profile.get("plan_tier", "free"))
+    if not limits.get("sharing"):
+        raise HTTPException(status_code=403, detail={
+            "error": "feature_locked",
+            "feature": "sharing",
+            "required_plan": "student",
+        })
+    mode = body.mode if body else "full"
+    expires_at = body.expires_at if body else None
+    try:
+        token = generate_share_token(lecture_id, mode=mode, expires_at=expires_at)
+        return {"share_url": f"/share/{token}", "mode": mode, "expires_at": expires_at}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to generate share link")
+
+
+@router.post("/lectures/{lecture_id}/unshare")
+def unshare_lecture(lecture_id: str, user=Depends(get_active_user)):
+    """Removes the share token, making the lecture private."""
+    _check_owner(lecture_id, user.id)
+    try:
+        clear_share_token(lecture_id)
+        return {"unshared": True}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to unshare")
+
+
+@router.get("/share/{token}")
+@limiter.limit("30/minute")
+def get_shared_lecture(request: Request, token: str):
+    """Public endpoint — no auth required. Finds lecture by share token."""
+    lecture = get_lecture_by_share_token(token)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Shared lecture not found")
+    if lecture.get("expired"):
+        raise HTTPException(status_code=410, detail="Share link has expired")
+    try:
+        increment_share_views(lecture["id"])
+    except Exception:
+        pass
+    return enrich_lecture_payload(lecture, section_rows=get_lecture_sections(lecture["id"]))
+
+
+@router.get("/share/{token}/preview")
+@limiter.limit("60/minute")
+def share_preview(request: Request, token: str):
+    """
+    Returns HTML with populated OG/Twitter meta tags for crawlers and link-unfurlers.
+    Real browsers are instantly redirected to the React SPA via meta refresh.
+    This makes every shared lecture indexable with unique title + description.
+    """
+    lecture = get_lecture_by_share_token(token)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Shared lecture not found")
+    if lecture.get("expired"):
+        raise HTTPException(status_code=410, detail="Share link has expired")
+
+    title = (lecture.get("title") or "Lecture Notes").strip()
+    topic = lecture.get("topic") or ""
+    summary_raw = lecture.get("master_summary") or lecture.get("summary") or ""
+    description = re.sub(r'#+\s*', '', summary_raw)   # strip markdown headings
+    description = re.sub(r'\s+', ' ', description).strip()[:160].rstrip('.,;')
+    if not description:
+        description = f'AI-generated lecture notes for "{title}"'
+        if topic:
+            description += f" ({topic})"
+        description += " — transcript, section summaries, and key concepts via Neurativo."
+
+    share_url = f"https://neurativo.vercel.app/share/{token}"
+    og_image = "https://neurativo.vercel.app/og.png"
+    page_title = f"{title} — Neurativo Lecture Notes"
+    # Escape user-supplied strings to prevent XSS in meta content
+    def _esc(s: str) -> str:
+        return s.replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{_esc(page_title)}</title>
+  <meta name="description" content="{_esc(description)}">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="{_esc(share_url)}">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Neurativo">
+  <meta property="og:url" content="{_esc(share_url)}">
+  <meta property="og:title" content="{_esc(page_title)}">
+  <meta property="og:description" content="{_esc(description)}">
+  <meta property="og:image" content="{og_image}">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="500">
+  <meta property="og:image:height" content="500">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@neurativo">
+  <meta name="twitter:title" content="{_esc(page_title)}">
+  <meta name="twitter:description" content="{_esc(description)}">
+  <meta name="twitter:image" content="{og_image}">
+
+  <meta http-equiv="refresh" content="0;url={_esc(share_url)}">
+</head>
+<body>
+  <h1>{_esc(title)}</h1>
+  <p>{_esc(description)}</p>
+  <p><a href="{_esc(share_url)}">View full lecture notes on Neurativo</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@router.delete("/lectures/{lecture_id}")
+@limiter.limit("10/minute")
+def delete_lecture_endpoint(request: Request, lecture_id: str, user=Depends(get_active_user)):
+    """Permanently deletes a lecture and all associated data."""
+    _check_owner(lecture_id, user.id)
+    try:
+        delete_lecture(lecture_id)
+        return {"status": "deleted", "lecture_id": lecture_id}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to delete lecture")
+
+
+class TitleUpdateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+
+
+@router.patch("/lectures/{lecture_id}/title")
+def update_lecture_title_endpoint(lecture_id: str, request: TitleUpdateRequest, user=Depends(get_active_user)):
+    """Updates a lecture's title."""
+    _check_owner(lecture_id, user.id)
+    title = request.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    try:
+        update_lecture_title(lecture_id, title)
+        return {"lecture_id": lecture_id, "title": title}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to update title")
+
+
+class TopicUpdateRequest(BaseModel):
+    topic: str = Field(..., min_length=1, max_length=50)
+
+
+@router.put("/lectures/{lecture_id}/topic")
+def update_topic(lecture_id: str, body: TopicUpdateRequest, user=Depends(get_active_user)):
+    _check_owner(lecture_id, user.id)
+    normalised = body.topic.strip().lower()[:50]
+    update_lecture_topic(lecture_id, normalised)
+    return {"topic": normalised}
+
+
+# =============================================================================
+#  PROFILE ENDPOINTS
+# =============================================================================
+
+class ProfileUpdateRequest(BaseModel):
+    display_name: str | None = Field(None, max_length=100)
+    preferred_language: str | None = Field(None, max_length=10)
+    pdf_auto_download: bool | None = None
+
+
+@router.get("/profile")
+def get_profile(user=Depends(get_active_user)):
+    """Returns the authenticated user's profile."""
+    try:
+        profile = get_user_profile(str(user.id))
+        profile["email"] = getattr(user, "email", None)
+        return profile
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to fetch profile")
+
+
+@router.patch("/profile")
+@limiter.limit("20/minute")
+def patch_profile(request: Request, body: ProfileUpdateRequest, user=Depends(get_active_user)):
+    """Updates the authenticated user's profile fields."""
+    data = body.model_dump(exclude_none=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    try:
+        updated = update_user_profile(str(user.id), data)
+        return updated
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to update profile")
+
+
+@router.delete("/profile")
+@limiter.limit("3/hour")
+def delete_profile(request: Request, user=Depends(get_active_user)):
+    """Deletes the authenticated user's account and all associated data."""
+    try:
+        delete_user_account(str(user.id))
+        return {"status": "deleted"}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to delete account")
+
+
+@router.get("/usage")
+def get_usage(user=Depends(get_active_user)):
+    """Returns comprehensive usage stats for the current month."""
+    # Ensure a profile row exists so every signed-up user appears in admin
+    ensure_user_profile(str(user.id), getattr(user, "email", "") or "")
+    try:
+        profile = get_user_profile(str(user.id))
+        plan_tier = profile.get("plan_tier") or "free"
+        limits = get_limits(plan_tier)
+
+        monthly              = get_monthly_usage(str(user.id))
+        lectures_count       = monthly["live_lectures"]
+        uploads_count        = monthly["uploads"]
+        total_minutes_used   = monthly["total_minutes_used"]
+        total_lectures_count = get_total_lecture_count(str(user.id))
+
+        live_limit       = limits["live_lectures_per_month"]
+        upload_limit     = limits["uploads_per_month"]
+        max_live_dur     = limits["live_max_duration_seconds"]
+        max_up_dur       = limits["upload_max_duration_seconds"]
+        total_min_limit  = limits.get("total_minutes_per_month")
+
+        def _dur_label(secs):
+            if secs is None: return "Unlimited"
+            m = secs // 60
+            h = m // 60
+            if h >= 1 and m % 60 == 0: return f"{h} hour{'s' if h > 1 else ''}"
+            if h >= 1: return f"{h}h {m % 60}m"
+            return f"{m} min"
+
+        resets_at = _next_month_iso()
+        return {
+            "lectures_this_month":       lectures_count,
+            "lectures_limit":            live_limit,
+            "lectures_remaining":        max(0, live_limit - lectures_count) if live_limit is not None else None,
+            "uploads_this_month":        uploads_count,
+            "uploads_limit":             upload_limit,
+            "uploads_remaining":         max(0, upload_limit - uploads_count) if upload_limit is not None else None,
+            "live_max_duration_seconds": max_live_dur,
+            "live_max_duration_label":   _dur_label(max_live_dur),
+            "upload_max_duration_seconds": max_up_dur,
+            "upload_max_duration_label": _dur_label(max_up_dur),
+            "total_minutes_used":        total_minutes_used,
+            "total_hours_used":          round(total_minutes_used / 60, 1),
+            "total_minutes_limit":       total_min_limit,
+            "total_hours_limit":         (total_min_limit // 60) if total_min_limit is not None else None,
+            "hours_remaining":           max(0, (total_min_limit - total_minutes_used) // 60) if total_min_limit is not None else None,
+            "plan_tier":                 plan_tier,
+            "month_resets_at":           resets_at,
+            "total_lectures_all_time":   total_lectures_count,
+            # Legacy fields
+            "limit":                     live_limit,
+            "remaining":                 max(0, live_limit - lectures_count) if live_limit is not None else None,
+            "resets_at":                 resets_at,
+            "limit_reached":             live_limit is not None and lectures_count >= live_limit,
+        }
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to fetch usage")
+
+
+@router.get("/announcements")
+def get_active_announcements(user=Depends(get_active_user)):
+    """Returns active (non-expired) announcements for the authenticated user."""
+    try:
+        return {"announcements": get_announcements()}
+    except Exception:
+        return {"announcements": []}
+
+
+# =============================================================================
+#  STUDY TOOLS
+# =============================================================================
+
+# ── Exam Prep ─────────────────────────────────────────────────────────────────
+
+@router.get("/lectures/{lecture_id}/exam-prep")
+def get_exam_prep_endpoint(lecture_id: str, user=Depends(get_active_user)):
+    """Returns cached or freshly-generated exam prep questions. Student+ only."""
+    _check_owner(lecture_id, user.id)
+    profile = get_user_profile(str(user.id))
+    limits = get_limits(profile.get("plan_tier", "free"))
+    if not limits.get("qa_enabled"):
+        raise HTTPException(status_code=403, detail={"error": "feature_locked", "feature": "exam_prep"})
+
+    cached = get_exam_prep(lecture_id)
+    if cached:
+        return {"lecture_id": lecture_id, "questions": cached, "cached": True}
+
+    lecture = get_lecture_for_summarization(lecture_id)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    master_summary = (lecture.get("master_summary") or lecture.get("summary") or "").strip()
+    if not master_summary:
+        raise HTTPException(status_code=422, detail="Lecture has no summary yet")
+
+    import json as _json
+    glossary_raw = lecture.get("glossary") or []
+    if isinstance(glossary_raw, str):
+        try:
+            glossary_raw = _json.loads(glossary_raw)
+        except Exception:
+            glossary_raw = []
+
+    topic = get_lecture_topic(lecture_id)
+    try:
+        questions = generate_exam_prep(master_summary, glossary_raw, topic=topic)
+    except Exception as e:
+        print(f"[exam_prep] generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate exam prep")
+
+    save_exam_prep(lecture_id, questions)
+    return {"lecture_id": lecture_id, "questions": questions, "cached": False}
+
+
+# ── Quiz Practice Attempts ────────────────────────────────────────────────────
+
+class QuizAttemptRequest(BaseModel):
+    score: int = Field(..., ge=0)
+    total: int = Field(..., ge=1)
+    duration_seconds: int | None = Field(None, ge=0)
+    answers_json: dict = Field(default_factory=dict)
+
+
+@router.post("/lectures/{lecture_id}/quiz-attempts")
+@limiter.limit("30/minute")
+def save_quiz_attempt_endpoint(
+    request: Request,
+    lecture_id: str,
+    body: QuizAttemptRequest,
+    user=Depends(get_active_user),
+):
+    """Saves a quiz attempt and computes weak topics from missed questions."""
+    _check_owner(lecture_id, user.id)
+
+    lecture = get_lecture_for_summarization(lecture_id)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    # Build weak_topics from missed questions intersected with glossary terms
+    import json as _json
+    import re as _re
+    glossary_raw = lecture.get("glossary") or []
+    if isinstance(glossary_raw, str):
+        try:
+            glossary_raw = _json.loads(glossary_raw)
+        except Exception:
+            glossary_raw = []
+    quiz_raw = lecture.get("quiz") or []
+    if isinstance(quiz_raw, str):
+        try:
+            quiz_raw = _json.loads(quiz_raw)
+        except Exception:
+            quiz_raw = []
+
+    glossary_terms = {g.get("term", "").lower() for g in glossary_raw if isinstance(g, dict) and g.get("term")}
+    term_miss_count: dict[str, int] = {}
+
+    for idx_str, chosen in body.answers_json.items():
+        try:
+            idx = int(idx_str)
+            q = quiz_raw[idx] if idx < len(quiz_raw) else None
+        except (ValueError, IndexError):
+            continue
+        if not q:
+            continue
+        correct_answer = q.get("answer") or q.get("correct_answer") or ""
+        if str(chosen).strip().upper() == str(correct_answer).strip().upper():
+            continue  # correct — skip
+        # Missed — tokenize question text and find glossary matches
+        question_text = (q.get("question") or "") + " " + (q.get("explanation") or "")
+        tokens = set(_re.findall(r"[a-z]{3,}", question_text.lower()))
+        for term in glossary_terms:
+            term_tokens = set(_re.findall(r"[a-z]{3,}", term))
+            if term_tokens and term_tokens.issubset(tokens):
+                term_miss_count[term] = term_miss_count.get(term, 0) + 1
+
+    weak_topics = [t for t, _ in sorted(term_miss_count.items(), key=lambda x: -x[1])[:5]]
+
+    saved = save_quiz_attempt(
+        lecture_id=lecture_id,
+        user_id=str(user.id),
+        score=body.score,
+        total=body.total,
+        duration_seconds=body.duration_seconds,
+        answers_json=body.answers_json,
+        weak_topics=weak_topics,
+    )
+    return {"ok": True, "id": saved.get("id"), "weak_topics": weak_topics}
+
+
+@router.get("/lectures/{lecture_id}/quiz-attempts")
+def get_quiz_attempts_endpoint(lecture_id: str, user=Depends(get_active_user)):
+    """Returns last 10 quiz attempts for the requesting user on this lecture."""
+    _check_owner(lecture_id, user.id)
+    attempts = get_quiz_attempts(lecture_id, str(user.id), limit=10)
+    return {"lecture_id": lecture_id, "attempts": attempts}
+
+
+# ── Concept Map ───────────────────────────────────────────────────────────────
+
+@router.get("/lectures/{lecture_id}/concept-map")
+def get_concept_map_endpoint(lecture_id: str, user=Depends(get_active_user)):
+    """Returns cached or freshly-generated concept map. Student+ only."""
+    _check_owner(lecture_id, user.id)
+    profile = get_user_profile(str(user.id))
+    limits = get_limits(profile.get("plan_tier", "free"))
+    if not limits.get("qa_enabled"):
+        raise HTTPException(status_code=403, detail={"error": "feature_locked", "feature": "concept_map", "required_plan": "student"})
+
+    cached = get_concept_map(lecture_id)
+    if cached:
+        return {"lecture_id": lecture_id, "map": cached, "cached": True}
+
+    lecture = get_lecture_for_summarization(lecture_id)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    master_summary = (lecture.get("master_summary") or lecture.get("summary") or "").strip()
+    if not master_summary:
+        raise HTTPException(status_code=422, detail="Lecture has no summary yet")
+
+    topic = get_lecture_topic(lecture_id)
+    try:
+        concept_map_data = generate_concept_map(master_summary, topic=topic)
+    except Exception as e:
+        print(f"[concept_map] generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate concept map")
+
+    save_concept_map(lecture_id, concept_map_data)
+    return {"lecture_id": lecture_id, "map": concept_map_data, "cached": False}
+
+
+# ── Semantic Lecture Search ───────────────────────────────────────────────────
+
+class SearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=300)
+
+
+@router.post("/search")
+@limiter.limit("20/minute")
+def semantic_search(request: Request, body: SearchRequest, user=Depends(get_active_user)):
+    """Semantic search across the user's lectures using summary embeddings."""
+    from app.services.embedding_service import embed_single
+
+    query = body.query.strip()
+    try:
+        query_embedding = embed_single(query)
+    except Exception as e:
+        print(f"[search] embed query failed: {e}")
+        raise HTTPException(status_code=500, detail="Search failed")
+
+    all_lectures = get_all_user_lecture_embeddings(str(user.id))
+    if not all_lectures:
+        return {"results": []}
+
+    scored = []
+    for lec in all_lectures:
+        emb = lec.get("summary_embedding")
+        if not emb:
+            continue
+        score = cosine_similarity(query_embedding, emb)
+        scored.append({
+            "lecture_id": lec["lecture_id"],
+            "title": lec["title"],
+            "topic": lec["topic"],
+            "score": round(float(score), 4),
+            "snippet": lec["summary"],
+        })
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return {"results": scored[:5]}
+
+
+# =============================================================================
+#  FEEDBACK
+# =============================================================================
+
+class FeedbackRequest(BaseModel):
+    type: str    = Field("general", pattern=r'^(bug|feature|general)$')
+    message: str = Field(..., min_length=3, max_length=1000)
+    page_path: str        = Field("", max_length=200)
+    lecture_id: str | None = Field(None)
+    rating: int | None    = Field(None, ge=1, le=5)
+
+
+@router.post("/feedback")
+@limiter.limit("10/hour")
+def submit_feedback(request: Request, body: FeedbackRequest, user=Depends(get_active_user)):
+    """
+    Saves user feedback submitted via the floating widget or post-lecture prompt.
+    Rate-limited to 10 submissions per hour per user.
+    """
+    from app.services.supabase_service import save_feedback
+    if body.lecture_id:
+        _validate_uuid(body.lecture_id)
+    try:
+        save_feedback(
+            user_id=str(user.id),
+            feedback_type=body.type,
+            message=body.message.strip(),
+            page_path=body.page_path,
+            lecture_id=body.lecture_id,
+            rating=body.rating,
+        )
+    except Exception as e:
+        print(f"[feedback] save error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save feedback")
+    return {"ok": True}
+
+
+# =============================================================================
+#  FEATURE FLAGS
+# =============================================================================
+
+@router.get("/feature-flags")
+def user_feature_flags(user=Depends(get_active_user)):
+    """
+    Returns {flags: {key: bool}} for the current user.
+    Frontend fetches this once on auth and stores in context.
+    """
+    is_admin = str(user.id) in settings.ADMIN_USER_IDS
+    flags = get_flags_for_user(str(user.id), is_admin=is_admin)
+    return {"flags": flags}
+
+
+# =============================================================================
+#  FEATURE RELEASES (What's New)
+# =============================================================================
+
+@router.get("/releases/unseen")
+def unseen_releases(user=Depends(get_active_user)):
+    """
+    Returns published feature releases this user hasn't dismissed yet.
+    Used by the What's New modal.
+    """
+    from app.services.supabase_service import get_user_plan
+    plan = get_user_plan(str(user.id)) or "free"
+    releases = get_unseen_releases(str(user.id), user_plan=plan)
+    return {"releases": releases}
+
+
+@router.post("/releases/{release_id}/dismiss")
+@limiter.limit("60/hour")
+def dismiss_release_endpoint(release_id: str, request: Request, user=Depends(get_active_user)):
+    """Mark a release as dismissed for this user — never shown again."""
+    _validate_uuid(release_id)
+    try:
+        dismiss_release(str(user.id), release_id)
+    except Exception as e:
+        print(f"[releases/dismiss] error: {e}")
+    return {"ok": True}
+

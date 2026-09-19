@@ -1,0 +1,1677 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useClerk } from '@clerk/react';
+import { useAuthModal } from '../components/AuthModal';
+import { useSEO } from '../lib/useSEO';
+import { useStructuredData } from '../lib/useStructuredData';
+import api from '../lib/api';
+import BetaApplyModal from '../components/BetaApplyModal';
+import { trackPageview } from '../lib/trackPageview';
+
+// ─── CSS ─────────────────────────────────────────────────────────────────────
+const CSS = `
+  .lp *, .lp *::before, .lp *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  .lp { font-family: 'Inter', sans-serif; background: #fafaf9; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
+
+  /* ── NAV ── */
+  .lp-nav {
+    position: sticky; top: 0; z-index: 50; height: 60px;
+    background: rgba(250,250,249,0.92); backdrop-filter: blur(16px);
+    border-bottom: 1px solid #f0ede8;
+    display: flex; align-items: center; padding: 0 40px;
+  }
+  .lp-nav-logo { display: flex; align-items: center; gap: 8px; text-decoration: none; flex-shrink: 0; }
+  .lp-nav-logo-icon {
+    width: 26px; height: 26px; background: #1a1a1a; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .lp-nav-wordmark { font-size: 15px; font-weight: 600; color: #1a1a1a; letter-spacing: -0.3px; }
+  .lp-nav-center {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 28px;
+  }
+  .lp-nav-lnk { font-size: 13px; font-weight: 400; color: #6b6b6b; text-decoration: none; transition: color 0.15s; }
+  .lp-nav-lnk:hover { color: #1a1a1a; }
+  .lp-nav-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .lp-btn-ghost-sm {
+    font-size: 13px; font-weight: 400; color: #6b6b6b; background: none; border: none;
+    cursor: pointer; padding: 6px 12px; border-radius: 8px; text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .lp-btn-ghost-sm:hover { background: #f0ede8; color: #1a1a1a; }
+  .lp-btn-dark-sm {
+    font-size: 13px; font-weight: 500; color: #fafaf9; background: #1a1a1a; border: none;
+    cursor: pointer; padding: 7px 16px; border-radius: 10px; text-decoration: none;
+    transition: opacity 0.15s; display: inline-block;
+  }
+  .lp-btn-dark-sm:hover { opacity: 0.8; }
+
+  /* ── NAV AVATAR / DROPDOWN ── */
+  .lp-avatar-wrap { position: relative; }
+  .lp-avatar {
+    width: 32px; height: 32px; border-radius: 50%; background: #1a1a1a; color: #fafaf9;
+    font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; border: none; transition: opacity 0.15s; font-family: inherit; flex-shrink: 0;
+  }
+  .lp-avatar:hover { opacity: 0.8; }
+  .lp-nav-dropdown {
+    position: absolute; right: 0; top: 42px; z-index: 100; background: #fff;
+    border: 1px solid #f0ede8; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    width: 210px; overflow: hidden; animation: lp-dd-in 0.15s ease;
+  }
+  @keyframes lp-dd-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  .lp-nav-dd-head { padding: 12px 14px; border-bottom: 1px solid #f0ede8; }
+  .lp-nav-dd-label { font-size: 11px; color: #a3a3a3; margin-bottom: 2px; }
+  .lp-nav-dd-email { font-size: 12px; font-weight: 500; color: #1a1a1a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lp-nav-dd-item {
+    display: block; width: 100%; text-align: left; padding: 9px 14px; font-size: 13px;
+    color: #6b6b6b; background: none; border: none; font-family: inherit; cursor: pointer;
+    transition: background 0.12s; text-decoration: none;
+  }
+  .lp-nav-dd-item:hover { background: #fafaf9; color: #1a1a1a; }
+  .lp-nav-dd-divider { height: 1px; background: #f0ede8; }
+  .lp-nav-dd-signout {
+    display: block; width: 100%; text-align: left; padding: 9px 14px; font-size: 13px;
+    color: #ef4444; background: none; border: none; cursor: pointer; font-family: inherit;
+    transition: background 0.12s;
+  }
+  .lp-nav-dd-signout:hover { background: #fff5f5; }
+
+  /* ── HERO ── */
+  .lp-hero {
+    padding: 100px 40px 80px;
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+  }
+  .lp-eyebrow {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 11px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase;
+    color: #a3a3a3; border: 1px solid #f0ede8; background: #fff;
+    padding: 5px 14px; border-radius: 100px; margin-bottom: 28px;
+  }
+  .lp-eyebrow-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+  .lp-h1 {
+    font-size: 52px; font-weight: 600; letter-spacing: -2px; line-height: 1.08;
+    color: #1a1a1a; max-width: 720px; margin-bottom: 20px;
+    font-family: 'Inter', sans-serif;
+  }
+  .lp-h1-em { color: #6b6b6b; font-style: italic; font-weight: 400; font-family: 'Playfair Display', Georgia, serif; }
+  .lp-hero-sub {
+    font-size: 16px; font-weight: 400; line-height: 1.7;
+    color: #6b6b6b; max-width: 480px; margin-bottom: 36px;
+  }
+  .lp-hero-btns {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 32px; flex-wrap: wrap; justify-content: center;
+  }
+  .lp-btn-dark-md {
+    font-size: 14px; font-weight: 500; color: #fafaf9; background: #1a1a1a; border: none;
+    cursor: pointer; padding: 11px 22px; border-radius: 10px; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 6px; transition: opacity 0.15s;
+  }
+  .lp-btn-dark-md:hover { opacity: 0.82; }
+  .lp-btn-ghost-md {
+    font-size: 14px; font-weight: 400; color: #6b6b6b; background: #fff;
+    border: 1px solid #f0ede8; cursor: pointer; padding: 10px 22px; border-radius: 10px;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .lp-btn-ghost-md:hover { border-color: #e8e4de; color: #1a1a1a; }
+  .lp-proof { font-size: 13px; color: #c8c4be; }
+
+  /* ── BETA STRIP ── */
+  .lp-beta-strip {
+    max-width: 960px; margin: 0 auto 28px; padding: 0 40px;
+  }
+  @media (max-width: 640px) { .lp-beta-strip { padding: 0 24px; } }
+  @media (max-width: 480px) {
+    .lp-beta-inner { align-items: flex-start; }
+    .lp-beta-apply { width: 100%; text-align: center; margin-top: 2px; }
+  }
+  @media (max-width: 400px) { .lp-beta-strip { padding: 0 14px; } }
+  .lp-beta-inner {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 16px; border-radius: 12px;
+    background: #f0fdf4; border: 1px solid #bbf7d0;
+    animation: lp-beta-in 0.3s ease;
+  }
+  @keyframes lp-beta-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .lp-beta-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+  .lp-beta-text { flex: 1; font-size: 13px; color: #166534; min-width: 0; line-height: 1.5; }
+  .lp-beta-chip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+    border-radius: 100px; font-size: 11px; font-weight: 600; border: 1px solid;
+    letter-spacing: 0.2px; white-space: nowrap; flex-shrink: 0;
+  }
+  .lp-beta-chip.pending { background: #fef3c7; border-color: #fde68a; color: #92400e; }
+  .lp-beta-chip.approved { background: #f0fdf4; border-color: #86efac; color: #15803d; }
+  .lp-beta-apply {
+    padding: 6px 14px; background: #166534; color: #fff; border: none;
+    border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;
+    font-family: inherit; transition: opacity 0.15s; white-space: nowrap; flex-shrink: 0;
+  }
+  .lp-beta-apply:hover { opacity: 0.88; }
+  .dark .lp-beta-inner { background: rgba(22,163,74,0.1); border-color: rgba(134,239,172,0.25); }
+  .dark .lp-beta-text { color: #4ade80; }
+  .dark .lp-beta-apply { background: #15803d; }
+
+  /* ── MOCKUP ── */
+  .lp-mockup-wrap { padding: 0 40px 80px; max-width: 960px; margin: 0 auto; }
+  .lp-browser {
+    border: 1px solid #f0ede8; border-radius: 14px; overflow: hidden;
+    background: #fff; box-shadow: 0 8px 48px rgba(0,0,0,0.06);
+  }
+  .lp-browser-bar {
+    height: 44px; background: #f5f3f0; border-bottom: 1px solid #f0ede8;
+    display: flex; align-items: center; padding: 0 16px; gap: 14px;
+  }
+  .lp-browser-dots { display: flex; gap: 6px; }
+  .lp-browser-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .lp-url-bar {
+    flex: 1; max-width: 300px; height: 24px; background: #eceae6; border-radius: 6px;
+    display: flex; align-items: center; padding: 0 10px; gap: 5px; margin: 0 auto;
+  }
+  .lp-url-text { font-size: 11px; color: #a3a3a3; font-family: monospace; }
+  .lp-browser-body { display: grid; grid-template-columns: 1fr 1fr; height: 300px; }
+  .lp-t-panel {
+    border-right: 1px solid #f0ede8; padding: 16px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .lp-s-panel { padding: 16px; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+  .lp-panel-lbl {
+    font-size: 11px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase;
+    color: #a3a3a3; margin-bottom: 10px;
+  }
+  .lp-live-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 500; color: #ef4444;
+    letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 8px;
+  }
+  .lp-live-dot {
+    width: 5px; height: 5px; border-radius: 50%; background: #ef4444;
+    animation: lp-rec-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes lp-rec-pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
+  .lp-seg {
+    font-size: 12.5px; color: #6b6b6b; line-height: 1.55;
+    padding: 6px 8px; border-radius: 6px; border-left: 3px solid transparent;
+    margin-bottom: 4px;
+  }
+  .lp-seg.live { border-left-color: #1a1a1a; background: #fafaf9; color: #1a1a1a; }
+  .lp-sum-card {
+    border: 1px solid #f0ede8; border-radius: 10px; padding: 10px 12px; background: #fff;
+  }
+  .lp-sum-title { font-size: 12px; font-weight: 500; color: #1a1a1a; margin-bottom: 5px; letter-spacing: -0.2px; }
+  .lp-sum-body { font-size: 11.5px; color: #6b6b6b; line-height: 1.55; margin-bottom: 8px; }
+  .lp-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+  .lp-pill {
+    font-size: 10.5px; padding: 2px 8px; border-radius: 20px;
+    background: #E6F1FB; color: #185FA5; border: 1px solid #B5D4F4;
+  }
+
+  /* ── STATS ── */
+  .lp-stats-wrap { padding: 0 40px 80px; max-width: 960px; margin: 0 auto; }
+  .lp-stats-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border: 1px solid #f0ede8; border-radius: 14px; overflow: hidden; background: #fff;
+  }
+  .lp-stat { padding: 28px 20px; text-align: center; border-right: 1px solid #f0ede8; }
+  .lp-stat:last-child { border-right: none; }
+  .lp-stat-n {
+    font-family: monospace; font-size: 34px; font-weight: 600; color: #1a1a1a;
+    letter-spacing: -1.5px; line-height: 1; margin-bottom: 6px;
+  }
+  .lp-stat-l { font-size: 12px; color: #a3a3a3; }
+
+  /* ── SECTION WRAPPER ── */
+  .lp-sec { padding: 0 40px 80px; max-width: 960px; margin: 0 auto; }
+  .lp-sec-eye {
+    font-size: 11px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase;
+    color: #a3a3a3; margin-bottom: 10px;
+  }
+  .lp-sec-h2 {
+    font-size: 36px; font-weight: 600; letter-spacing: -1.2px; line-height: 1.15;
+    color: #1a1a1a; margin-bottom: 10px; font-family: 'Inter', sans-serif;
+  }
+  .lp-sec-sub {
+    font-size: 15px; color: #6b6b6b; line-height: 1.7; max-width: 480px; margin-bottom: 40px;
+  }
+
+  /* ── FEATURES ── */
+  .lp-feat-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px; background: #f0ede8;
+    border: 1px solid #f0ede8; border-radius: 14px; overflow: hidden;
+  }
+  .lp-feat-cell { background: #fff; padding: 28px; transition: background 0.15s; }
+  .lp-feat-cell:hover { background: #fafaf9; }
+  .lp-feat-icon {
+    width: 34px; height: 34px; border-radius: 9px; border: 1px solid #f0ede8;
+    background: #fff; display: flex; align-items: center; justify-content: center;
+    margin-bottom: 14px; color: #1a1a1a; flex-shrink: 0;
+  }
+  .lp-feat-title { font-size: 14px; font-weight: 500; color: #1a1a1a; letter-spacing: -0.2px; margin-bottom: 6px; }
+  .lp-feat-desc { font-size: 13px; color: #6b6b6b; line-height: 1.65; }
+
+  /* ── HOW IT WORKS ── */
+  .lp-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .lp-step {
+    border: 1px solid #f0ede8; border-radius: 14px; background: #fff;
+    padding: 28px; transition: border-color 0.15s;
+  }
+  .lp-step:hover { border-color: #e8e4de; }
+  .lp-step-n { font-family: monospace; font-size: 12px; color: #a3a3a3; margin-bottom: 20px; }
+  .lp-step-title { font-size: 15px; font-weight: 500; color: #1a1a1a; letter-spacing: -0.3px; margin-bottom: 8px; }
+  .lp-step-desc { font-size: 13px; color: #6b6b6b; line-height: 1.65; }
+
+  /* ── PRICING ── */
+  .lp-pricing { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: start; }
+  .lp-plan { border: 1px solid #f0ede8; border-radius: 14px; background: #fff; padding: 28px; }
+  .lp-plan-feat { border: 1.5px solid #1a1a1a; border-radius: 14px; background: #fafaf9; padding: 28px; }
+  .lp-plan-badge {
+    display: inline-block; font-size: 10px; font-weight: 500; letter-spacing: 0.8px;
+    text-transform: uppercase; color: #fafaf9; background: #1a1a1a;
+    padding: 3px 10px; border-radius: 100px; margin-bottom: 16px;
+  }
+  .lp-plan-name { font-size: 14px; font-weight: 500; color: #1a1a1a; margin-bottom: 4px; letter-spacing: -0.2px; }
+  .lp-plan-tagline { font-size: 13px; color: #6b6b6b; line-height: 1.5; margin-bottom: 20px; }
+  .lp-price-row { display: flex; align-items: baseline; gap: 3px; margin-bottom: 2px; }
+  .lp-price-sign { font-size: 16px; color: #6b6b6b; align-self: flex-start; margin-top: 6px; }
+  .lp-price-big {
+    font-size: 34px; font-weight: 600; color: #1a1a1a;
+    letter-spacing: -2px; line-height: 1; font-family: 'Inter', sans-serif;
+  }
+  .lp-price-mo { font-size: 12px; color: #a3a3a3; margin-bottom: 4px; }
+  .lp-price-lkr { font-size: 12px; color: #c0bdb8; margin-bottom: 16px; }
+  .lp-plan-div { height: 1px; background: #f0ede8; margin: 20px 0; }
+  .lp-plan-items { list-style: none; margin-bottom: 24px; display: flex; flex-direction: column; gap: 9px; }
+  .lp-plan-item { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: #6b6b6b; line-height: 1.45; }
+  .lp-plan-item.no { opacity: 0.38; }
+  .lp-check { color: #1a1a1a; flex-shrink: 0; margin-top: 1px; }
+  .lp-no { color: #c4c0bb; flex-shrink: 0; margin-top: 1px; }
+  .lp-credits-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .lp-credit-pack { border: 1px solid #f0ede8; border-radius: 12px; padding: 16px 18px; background: #fff; }
+  .lp-credit-pack.best { border-color: #1a1a1a; }
+  .lp-credit-pack-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #a3a3a3; margin-bottom: 6px; }
+  .lp-credit-pack.best .lp-credit-pack-label { color: #1a1a1a; }
+  .lp-credit-pack-credits { font-size: 24px; font-weight: 700; color: #1a1a1a; margin-bottom: 2px; }
+  .lp-credit-pack-price { font-size: 13px; color: #6b6b6b; margin-bottom: 2px; }
+  .lp-credit-pack-per { font-size: 11px; color: #c0bdb8; }
+  .lp-btn-plan-dark {
+    display: block; width: 100%; text-align: center; font-size: 13px; font-weight: 500;
+    color: #fafaf9; background: #1a1a1a; border: none; cursor: pointer;
+    padding: 10px; border-radius: 10px; text-decoration: none; transition: opacity 0.15s;
+  }
+  .lp-btn-plan-dark:hover { opacity: 0.82; }
+  .lp-btn-plan-outline {
+    display: block; width: 100%; text-align: center; font-size: 13px; font-weight: 400;
+    color: #1a1a1a; background: #fff; border: 1px solid #f0ede8; cursor: pointer;
+    padding: 10px; border-radius: 10px; text-decoration: none; transition: border-color 0.15s;
+  }
+  .lp-btn-plan-outline:hover { border-color: #e8e4de; }
+
+  /* ── CTA ── */
+  .lp-cta-wrap { padding: 0 40px 80px; }
+  .lp-cta {
+    background: #1a1a1a; border-radius: 18px; padding: 64px 40px;
+    text-align: center; display: flex; flex-direction: column; align-items: center;
+  }
+  .lp-cta-h2 {
+    font-size: 36px; font-weight: 600; color: #fafaf9; letter-spacing: -1.2px;
+    line-height: 1.15; margin-bottom: 12px; max-width: 560px;
+    font-family: 'Inter', sans-serif;
+  }
+  .lp-cta-sub { font-size: 15px; color: #6b6b6b; line-height: 1.7; margin-bottom: 28px; max-width: 380px; }
+  .lp-btn-light {
+    font-size: 14px; font-weight: 500; color: #1a1a1a; background: #fafaf9; border: none;
+    cursor: pointer; padding: 11px 26px; border-radius: 10px; text-decoration: none;
+    transition: opacity 0.15s; display: inline-block;
+  }
+  .lp-btn-light:hover { opacity: 0.88; }
+
+  /* ── ABOUT ── */
+  .lp-about-quote {
+    border-left: 2px solid #1a1a1a; padding-left: 20px; margin-bottom: 44px;
+  }
+  .lp-about-quote-text {
+    font-size: 28px; font-weight: 600; color: #1a1a1a;
+    letter-spacing: -0.8px; line-height: 1.25; margin-bottom: 8px;
+  }
+  .lp-about-quote-sub { font-size: 14px; color: #a3a3a3; line-height: 1.6; }
+  .lp-about-cols {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+    background: #f0ede8; border: 1px solid #f0ede8;
+    border-radius: 14px; overflow: hidden; margin-bottom: 28px;
+  }
+  .lp-about-col { background: #fff; padding: 28px; }
+  .lp-about-col-label {
+    font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase;
+    color: #a3a3a3; margin-bottom: 12px;
+  }
+  .lp-about-col-text { font-size: 13.5px; color: #6b6b6b; line-height: 1.8; }
+  .lp-about-founders {
+    font-size: 12px; color: #a3a3a3;
+    border-top: 1px solid #f0ede8; padding-top: 20px;
+  }
+  .lp-about-founders span { color: #6b6b6b; }
+  .lp-about-founder-lnk {
+    color: #6b6b6b; text-decoration: none; border-bottom: 1px solid #d4d0ca;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .lp-about-founder-lnk:hover { color: #0a66c2; border-color: #0a66c2; }
+  @media (max-width: 640px) {
+    .lp-about-cols { grid-template-columns: 1fr; }
+    .lp-about-quote-text { font-size: 22px; }
+  }
+
+  /* ── FOOTER ── */
+  .lp-footer {
+    border-top: 1px solid #f0ede8; padding: 36px 40px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px;
+  }
+  .lp-footer-brand-wrap { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+  .lp-footer-icon {
+    width: 22px; height: 22px; border-radius: 6px; background: #1a1a1a;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .lp-footer-name { font-size: 14px; font-weight: 600; color: #1a1a1a; letter-spacing: -0.3px; }
+  .lp-footer-lnks { display: flex; gap: 24px; align-items: center; }
+  .lp-footer-lnk { font-size: 13px; color: #a3a3a3; text-decoration: none; transition: color 0.15s; }
+  .lp-footer-lnk:hover { color: #1a1a1a; }
+  .lp-footer-copy { font-size: 12px; color: #a3a3a3; text-align: right; }
+
+  /* ── N.A.S.T. ── */
+  .lp-nast-wrap { padding: 0 40px 80px; max-width: 960px; margin: 0 auto; }
+  .lp-nast-inner {
+    background: #111; border-radius: 20px; padding: 52px 48px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center;
+  }
+  .lp-nast-left {}
+  .lp-nast-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase;
+    color: rgba(255,255,255,0.35); border: 1px solid rgba(255,255,255,0.1);
+    padding: 4px 12px; border-radius: 100px; margin-bottom: 20px;
+  }
+  .lp-nast-badge-dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+  .lp-nast-h2 {
+    font-size: 30px; font-weight: 600; color: #fafaf9; letter-spacing: -1px;
+    line-height: 1.2; margin-bottom: 14px; font-family: 'Inter', sans-serif;
+  }
+  .lp-nast-h2 span { color: rgba(255,255,255,0.38); }
+  .lp-nast-sub { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.75; max-width: 360px; }
+
+  /* Right: signal visualiser */
+  .lp-nast-right { display: flex; flex-direction: column; gap: 18px; }
+  .lp-nast-signal {}
+  .lp-nast-signal-head {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px;
+  }
+  .lp-nast-signal-name { font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.55); letter-spacing: 0.2px; }
+  .lp-nast-signal-val { font-size: 12px; font-family: monospace; color: rgba(255,255,255,0.35); }
+  .lp-nast-bar-bg { width: 100%; height: 5px; background: rgba(255,255,255,0.08); border-radius: 99px; overflow: hidden; }
+  .lp-nast-bar-fill { height: 100%; border-radius: 99px; transition: width 1.4s cubic-bezier(0.16, 1, 0.3, 1); }
+
+  /* Composite */
+  .lp-nast-divider { height: 1px; background: rgba(255,255,255,0.08); margin: 4px 0; }
+  .lp-nast-composite-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }
+  .lp-nast-composite-label { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.75); letter-spacing: 0.3px; }
+  .lp-nast-composite-val { font-size: 13px; font-family: monospace; font-weight: 600; color: #22c55e; }
+  .lp-nast-composite-bar-bg { width: 100%; height: 6px; background: rgba(255,255,255,0.08); border-radius: 99px; overflow: hidden; }
+  .lp-nast-composite-fill { height: 100%; background: #22c55e; border-radius: 99px; transition: width 1.8s cubic-bezier(0.16, 1, 0.3, 1); }
+  .lp-nast-trigger {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 12px;
+    font-size: 11px; font-weight: 500; color: #22c55e; letter-spacing: 0.3px;
+  }
+  .lp-nast-trigger-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; animation: lp-rec-pulse 1.4s ease-in-out infinite; }
+
+  @media (max-width: 768px) {
+    .lp-nast-wrap { padding: 0 24px 60px; }
+    .lp-nast-inner { grid-template-columns: 1fr; padding: 32px 24px; gap: 32px; }
+    .lp-nast-h2 { font-size: 24px; }
+  }
+
+  /* ── TESTIMONIALS ── */
+  .lp-testi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .lp-testi-card { background: #fff; border: 1px solid #f0ede8; border-radius: 14px; padding: 24px; transition: border-color 0.15s; }
+  .lp-testi-card:hover { border-color: #e8e4de; }
+  .lp-testi-quote { font-size: 13px; color: #6b6b6b; line-height: 1.7; margin-bottom: 16px; font-style: italic; }
+  .lp-testi-author { display: flex; align-items: center; gap: 10px; }
+  .lp-testi-avatar { width: 32px; height: 32px; border-radius: 50%; background: #1a1a1a; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fafaf9; flex-shrink: 0; }
+  .lp-testi-name { font-size: 13px; font-weight: 500; color: #1a1a1a; letter-spacing: -0.1px; }
+  .lp-testi-school { font-size: 11px; color: #a3a3a3; }
+  .lp-testi-stars { display: flex; gap: 2px; margin-bottom: 12px; }
+  .lp-testi-star { color: #f59e0b; font-size: 12px; }
+
+  /* ── FAQ ── */
+  .lp-faq { display: flex; flex-direction: column; gap: 0; border: 1px solid #f0ede8; border-radius: 14px; overflow: hidden; background: #fff; }
+  .lp-faq-item { border-bottom: 1px solid #f0ede8; }
+  .lp-faq-item:last-child { border-bottom: none; }
+  .lp-faq-q { width: 100%; text-align: left; padding: 18px 20px; font-size: 14px; font-weight: 500; color: #1a1a1a; background: none; border: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; transition: background 0.12s; font-family: 'Inter', sans-serif; }
+  .lp-faq-q:hover { background: #fafaf9; }
+  .lp-faq-chevron { flex-shrink: 0; color: #a3a3a3; transition: transform 0.2s; }
+  .lp-faq-chevron.open { transform: rotate(180deg); }
+  .lp-faq-a { padding: 0 20px 18px; font-size: 13px; color: #6b6b6b; line-height: 1.7; }
+
+  /* ── MOBILE HAMBURGER ── */
+  .lp-hamburger { display: none; background: none; border: none; cursor: pointer; color: #6b6b6b; padding: 4px; margin-left: 8px; }
+  .lp-mobile-menu {
+    display: none; position: absolute; top: 60px; left: 0; right: 0; z-index: 49;
+    background: rgba(250,250,249,0.97); border-bottom: 1px solid #f0ede8;
+    padding: 16px 24px 20px; flex-direction: column; gap: 4px;
+    backdrop-filter: blur(16px);
+  }
+  .lp-mobile-menu.open { display: flex; }
+  .lp-mobile-menu-lnk { font-size: 15px; color: #1a1a1a; text-decoration: none; padding: 10px 0; border-bottom: 1px solid #f0ede8; }
+  .lp-mobile-menu-lnk:last-child { border-bottom: none; }
+
+  /* ── MOBILE ── */
+  @media (max-width: 768px) {
+    .lp { overflow-x: hidden; }
+    .lp-nav { padding: 0 20px; position: relative; }
+    .lp-nav-center { display: none; }
+    .lp-hamburger { display: block; }
+    .lp-btn-ghost-sm { display: none; } /* hide ghost "Sign in" on mobile — it's in the hamburger menu */
+
+    .lp-hero { padding: 70px 24px 60px; }
+    .lp-h1 { font-size: 36px; letter-spacing: -1.2px; }
+    .lp-hero-sub { font-size: 15px; }
+    .lp-hero-btns { flex-direction: column; align-items: stretch; width: 100%; max-width: 320px; }
+    .lp-btn-dark-md, .lp-btn-ghost-md { justify-content: center; min-height: 44px; }
+
+    .lp-mockup-wrap { display: none; }
+
+    .lp-stats-wrap { padding: 0 24px 60px; }
+    .lp-stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .lp-stat:nth-child(2) { border-right: none; }
+    .lp-stat:nth-child(3) { border-top: 1px solid #f0ede8; }
+    .lp-stat:nth-child(4) { border-top: 1px solid #f0ede8; border-right: none; }
+
+    .lp-sec { padding: 0 24px 60px; }
+    .lp-sec-h2 { font-size: 28px; letter-spacing: -0.8px; }
+    .lp-feat-grid { grid-template-columns: 1fr; gap: 0; }
+    .lp-feat-cell:not(:last-child) { border-bottom: 1px solid #f0ede8; }
+    .lp-steps { grid-template-columns: 1fr; }
+    .lp-pricing { grid-template-columns: 1fr; }
+    .lp-plan-feat { order: -1; }
+    .lp-credits-grid { grid-template-columns: 1fr 1fr; }
+    .lp-testi-grid { grid-template-columns: 1fr; }
+
+    .lp-cta-wrap { padding: 0 24px 60px; }
+    .lp-cta { padding: 40px 24px; }
+    .lp-cta-h2 { font-size: 26px; letter-spacing: -0.8px; }
+
+    .lp-footer { grid-template-columns: 1fr; text-align: center; justify-items: center; padding: 28px 24px; gap: 16px; }
+    .lp-footer-lnks { justify-content: center; flex-wrap: wrap; gap: 16px; }
+    .lp-footer-copy { text-align: center; }
+
+    .lp-faq-q { font-size: 13.5px; padding: 16px 18px; }
+  }
+
+  @media (max-width: 480px) {
+    .lp-nav { padding: 0 16px; }
+    .lp-hero { padding: 56px 16px 48px; }
+    .lp-h1 { font-size: 28px; letter-spacing: -0.8px; }
+    .lp-hero-sub { font-size: 14px; }
+    .lp-hero-eyebrow { font-size: 10px; }
+    .lp-btn-dark-md, .lp-btn-ghost-md { font-size: 13.5px; }
+
+    .lp-stats-wrap { padding: 0 16px 48px; }
+    .lp-stat { padding: 20px 14px; }
+    .lp-stat-n { font-size: 28px; }
+
+    .lp-sec { padding: 0 16px 48px; }
+    .lp-sec-h2 { font-size: 22px; letter-spacing: -0.5px; }
+    .lp-sec-sub { font-size: 13px; }
+
+    .lp-feat-cell { padding: 22px 18px; }
+    .lp-step { padding: 22px 18px; }
+
+    .lp-credits-grid { grid-template-columns: 1fr; }
+    .lp-credit-pack { padding: 14px 16px; }
+
+    .lp-nast-wrap { padding: 0 16px 48px; }
+    .lp-nast-inner { padding: 28px 20px; gap: 24px; }
+    .lp-nast-h2 { font-size: 20px; }
+
+    .lp-cta-wrap { padding: 0 16px 48px; }
+    .lp-cta { padding: 32px 20px; border-radius: 14px; }
+    .lp-cta-h2 { font-size: 20px; letter-spacing: -0.5px; }
+
+    .lp-about-quote-text { font-size: 20px; }
+    .lp-about-col { padding: 20px; }
+
+    .lp-footer { padding: 24px 16px; }
+    .lp-pricing { gap: 10px; }
+    .lp-plan, .lp-plan-feat { padding: 22px 18px; }
+    .lp-mobile-menu { padding: 12px 16px 16px; }
+    .lp-testi-grid { gap: 10px; }
+    .lp-testi-card { padding: 18px; }
+
+    .lp-faq-q { font-size: 13px; padding: 14px 16px; }
+    .lp-faq-a { padding: 0 16px 14px; font-size: 12.5px; }
+  }
+
+  @media (max-width: 360px) {
+    .lp-h1 { font-size: 24px; letter-spacing: -0.5px; }
+    .lp-hero { padding: 48px 14px 40px; }
+    .lp-sec { padding: 0 14px 40px; }
+    .lp-sec-h2 { font-size: 20px; }
+    .lp-nast-inner { padding: 24px 16px; }
+    .lp-cta { padding: 28px 16px; }
+    .lp-cta-h2 { font-size: 18px; }
+  }
+
+  /* ═══════════════════════════════════════
+     DARK MODE OVERRIDES
+  ═══════════════════════════════════════ */
+  .dark .lp { background: var(--color-bg); color: var(--color-text); }
+  .dark .lp-nav { background: rgba(18,18,18,0.92); border-bottom-color: var(--color-border); }
+  .dark .lp-nav-wordmark { color: var(--color-text); }
+  .dark .lp-nav-lnk { color: var(--color-sec); }
+  .dark .lp-nav-lnk:hover { color: var(--color-text); }
+  .dark .lp-btn-ghost-sm { color: var(--color-sec); }
+  .dark .lp-btn-ghost-sm:hover { background: var(--color-border); color: var(--color-text); }
+  .dark .lp-btn-dark-sm { background: var(--color-dark); color: var(--color-dark-fg); }
+  .dark .lp-avatar { background: var(--color-dark); color: var(--color-dark-fg); }
+  .dark .lp-nav-dropdown { background: var(--color-card); border-color: var(--color-border); box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+  .dark .lp-nav-dd-head { border-bottom-color: var(--color-border); }
+  .dark .lp-nav-dd-email { color: var(--color-text); }
+  .dark .lp-nav-dd-item { color: var(--color-sec); }
+  .dark .lp-nav-dd-item:hover { background: var(--color-border); color: var(--color-text); }
+  .dark .lp-nav-dd-divider { background: var(--color-border); }
+  .dark .lp-mobile-menu { background: rgba(18,18,18,0.97); border-bottom-color: var(--color-border); }
+  .dark .lp-mobile-menu-lnk { color: var(--color-text); border-bottom-color: var(--color-border); }
+  .dark .lp-hamburger { color: var(--color-sec); }
+
+  .dark .lp-eyebrow { background: var(--color-card); border-color: var(--color-border); color: var(--color-muted); }
+  .dark .lp-h1 { color: var(--color-text); }
+  .dark .lp-h1-em { color: var(--color-sec); }
+  .dark .lp-hero-sub { color: var(--color-sec); }
+  .dark .lp-btn-dark-md { background: var(--color-dark); color: var(--color-dark-fg); }
+  .dark .lp-btn-ghost-md { background: var(--color-card); border-color: var(--color-border); color: var(--color-sec); }
+  .dark .lp-btn-ghost-md:hover { border-color: var(--color-border-hov); color: var(--color-text); }
+  .dark .lp-proof { color: var(--color-muted); }
+
+  .dark .lp-browser { background: var(--color-card); border-color: var(--color-border); box-shadow: 0 8px 48px rgba(0,0,0,0.4); }
+  .dark .lp-browser-bar { background: var(--color-bg); border-bottom-color: var(--color-border); }
+  .dark .lp-url-bar { background: var(--color-border); }
+  .dark .lp-url-text { color: var(--color-muted); }
+  .dark .lp-t-panel { border-right-color: var(--color-border); }
+  .dark .lp-seg { color: var(--color-sec); }
+  .dark .lp-seg.live { border-left-color: var(--color-text); background: var(--color-border); color: var(--color-text); }
+  .dark .lp-sum-card { background: var(--color-bg); border-color: var(--color-border); }
+  .dark .lp-sum-title { color: var(--color-text); }
+  .dark .lp-sum-body { color: var(--color-sec); }
+  .dark .lp-pill { background: #0f1e38; color: #93c5fd; border-color: #1e3a6a; }
+
+  .dark .lp-stats-grid { background: var(--color-card); border-color: var(--color-border); }
+  .dark .lp-stat { border-right-color: var(--color-border); }
+  .dark .lp-stat-n { color: var(--color-text); }
+  .dark .lp-stat-l { color: var(--color-muted); }
+  @media (max-width: 768px) {
+    .dark .lp-stat:nth-child(3) { border-top-color: var(--color-border); }
+    .dark .lp-stat:nth-child(4) { border-top-color: var(--color-border); }
+    .dark .lp-feat-cell:not(:last-child) { border-bottom-color: var(--color-border); }
+    .dark .lp-sec-h2 { color: var(--color-text); }
+  }
+
+  .dark .lp-sec-eye { color: var(--color-muted); }
+  .dark .lp-sec-h2 { color: var(--color-text); }
+  .dark .lp-sec-sub { color: var(--color-sec); }
+
+  .dark .lp-feat-grid { background: var(--color-border); border-color: var(--color-border); }
+  .dark .lp-feat-cell { background: var(--color-card); }
+  .dark .lp-feat-cell:hover { background: var(--color-bg); }
+  .dark .lp-feat-icon { background: var(--color-bg); border-color: var(--color-border); color: var(--color-text); }
+  .dark .lp-feat-title { color: var(--color-text); }
+  .dark .lp-feat-desc { color: var(--color-sec); }
+
+  .dark .lp-step { background: var(--color-card); border-color: var(--color-border); }
+  .dark .lp-step:hover { border-color: var(--color-border-hov); }
+  .dark .lp-step-n { color: var(--color-muted); }
+  .dark .lp-step-title { color: var(--color-text); }
+  .dark .lp-step-desc { color: var(--color-sec); }
+
+  .dark .lp-plan { background: var(--color-card); border-color: var(--color-border); }
+  .dark .lp-plan-feat { background: var(--color-card); border-color: var(--color-text); }
+  .dark .lp-plan-name { color: var(--color-text); }
+  .dark .lp-plan-tagline { color: var(--color-sec); }
+  .dark .lp-price-sign { color: var(--color-sec); }
+  .dark .lp-price-big { color: var(--color-text); }
+  .dark .lp-price-mo { color: var(--color-muted); }
+  .dark .lp-price-lkr { color: var(--color-muted); }
+  .dark .lp-plan-div { background: var(--color-border); }
+  .dark .lp-plan-item { color: var(--color-sec); }
+  .dark .lp-credit-pack { background: var(--color-card); border-color: var(--color-border); }
+  .dark .lp-credit-pack.best { border-color: var(--color-text); }
+  .dark .lp-credit-pack-credits { color: var(--color-text); }
+  .dark .lp-credit-pack-price { color: var(--color-sec); }
+  .dark .lp-check { color: var(--color-text); }
+  .dark .lp-btn-plan-dark { background: var(--color-dark); color: var(--color-dark-fg); }
+  .dark .lp-btn-plan-outline { background: var(--color-card); color: var(--color-text); border-color: var(--color-border); }
+  .dark .lp-btn-plan-outline:hover { border-color: var(--color-border-hov); }
+
+  .dark .lp-cta { background: #1a1a2e; border: 1px solid var(--color-border); }
+  .dark .lp-cta-h2 { color: var(--color-text); }
+  .dark .lp-cta-sub { color: var(--color-sec); }
+  .dark .lp-btn-light { background: var(--color-border-hov); color: var(--color-text); }
+
+  .dark .lp-about-quote { border-left-color: var(--color-text); }
+  .dark .lp-about-quote-text { color: var(--color-text); }
+  .dark .lp-about-quote-sub { color: var(--color-muted); }
+  .dark .lp-about-cols { background: var(--color-border); border-color: var(--color-border); }
+  .dark .lp-about-col { background: var(--color-card); }
+  .dark .lp-about-col-label { color: var(--color-muted); }
+  .dark .lp-about-col-text { color: var(--color-sec); }
+  .dark .lp-about-founders { border-top-color: var(--color-border); color: var(--color-muted); }
+  .dark .lp-about-founders span { color: var(--color-sec); }
+  .dark .lp-about-founder-lnk { color: var(--color-sec); border-bottom-color: var(--color-border-hov); }
+  .dark .lp-about-founder-lnk:hover { color: #70b5f9; border-color: #70b5f9; }
+
+  .dark .lp-footer { border-top-color: var(--color-border); }
+  .dark .lp-footer-name { color: var(--color-text); }
+  .dark .lp-footer-lnk { color: var(--color-muted); }
+  .dark .lp-footer-lnk:hover { color: var(--color-text); }
+  .dark .lp-footer-copy { color: var(--color-muted); }
+
+  .dark .lp-nast-inner { background: #0a0a0a; border: 1px solid rgba(255,255,255,0.06); }
+
+  .dark .lp-testi-card { background: var(--color-card); border-color: var(--color-border); }
+  .dark .lp-testi-card:hover { border-color: var(--color-border-hov); }
+  .dark .lp-testi-quote { color: var(--color-sec); }
+  .dark .lp-testi-name { color: var(--color-text); }
+  .dark .lp-testi-school { color: var(--color-muted); }
+
+  .dark .lp-faq { background: var(--color-card); border-color: var(--color-border); }
+  .dark .lp-faq-item { border-bottom-color: var(--color-border); }
+  .dark .lp-faq-q { color: var(--color-text); }
+  .dark .lp-faq-q:hover { background: var(--color-bg); }
+  .dark .lp-faq-chevron { color: var(--color-muted); }
+  .dark .lp-faq-a { color: var(--color-sec); }
+
+  /* ── VISION ── */
+  .lp-vision-wrap { padding: 0 40px 80px; max-width: 960px; margin: 0 auto; }
+  .lp-vision-inner {
+    background: #111; border-radius: 20px; padding: 60px 52px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 52px; align-items: center;
+  }
+  .lp-vision-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase;
+    color: rgba(255,255,255,0.35); border: 1px solid rgba(255,255,255,0.1);
+    padding: 4px 12px; border-radius: 100px; margin-bottom: 22px;
+  }
+  .lp-vision-badge-dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+  .lp-vision-h2 {
+    font-size: 30px; font-weight: 600; color: #fafaf9; letter-spacing: -1px;
+    line-height: 1.2; margin-bottom: 16px; font-family: 'Inter', sans-serif;
+  }
+  .lp-vision-h2 span { color: rgba(255,255,255,0.52); }
+  .lp-vision-sub { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.8; }
+
+  .lp-vtl { display: flex; flex-direction: column; }
+  .lp-vtl-item { display: flex; gap: 16px; align-items: flex-start; padding-bottom: 36px; position: relative; }
+  .lp-vtl-item:not(:last-child)::before {
+    content: ''; position: absolute; left: 15px; top: 28px; bottom: 0;
+    width: 1px; background: rgba(255,255,255,0.08);
+  }
+  .lp-vtl-dot-wrap { width: 32px; flex-shrink: 0; display: flex; justify-content: center; padding-top: 3px; }
+  .lp-vtl-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.15); background: transparent; flex-shrink: 0;
+  }
+  .lp-vtl-dot.active { background: #22c55e; border-color: #22c55e; }
+  .lp-vtl-dot.future { border-style: dashed; opacity: 0.5; }
+  .lp-vtl-label { font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: rgba(255,255,255,0.25); margin-bottom: 3px; }
+  .lp-vtl-title { font-size: 14px; font-weight: 500; color: rgba(255,255,255,0.38); margin-bottom: 4px; }
+  .lp-vtl-title.active { color: #fafaf9; }
+  .lp-vtl-desc { font-size: 12px; color: rgba(255,255,255,0.22); line-height: 1.65; }
+  .lp-vtl-desc.active { color: rgba(255,255,255,0.45); }
+
+  @media (max-width: 768px) {
+    .lp-vision-wrap { padding: 0 24px 60px; }
+    .lp-vision-inner { grid-template-columns: 1fr; padding: 32px 24px; gap: 32px; }
+    .lp-vision-h2 { font-size: 24px; }
+  }
+  @media (max-width: 480px) {
+    .lp-vision-wrap { padding: 0 16px 48px; }
+    .lp-vision-inner { padding: 28px 20px; gap: 28px; }
+    .lp-vision-h2 { font-size: 20px; letter-spacing: -0.6px; }
+  }
+  .dark .lp-vision-inner { background: #0a0a0a; border: 1px solid rgba(255,255,255,0.06); }
+`;
+
+// ─── Icons ────────────────────────────────────────────────────────────────────
+const IconMic = () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+    </svg>
+);
+const IconLayers = () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>
+    </svg>
+);
+const IconChat = () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+);
+const IconBulb = () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/>
+        <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/>
+    </svg>
+);
+const IconDoc = () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/>
+    </svg>
+);
+const IconCloud = () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
+        <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+    </svg>
+);
+const IconArrow = () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+    </svg>
+);
+const IconCheck = () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+    </svg>
+);
+const IconLogo = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-dark-fg, #fafaf9)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
+    </svg>
+);
+
+// ─── Section sub-components ───────────────────────────────────────────────────
+
+
+function NavAvatar({ user }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
+    const initial = (user?.email?.[0] || '?').toUpperCase();
+    const { signOut } = useClerk();
+
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [open]);
+
+    const handleSignOut = async () => {
+        await signOut();
+        setOpen(false);
+    };
+
+    return (
+        <div className="lp-avatar-wrap" ref={ref}>
+            <button className="lp-avatar" onClick={() => setOpen(o => !o)}>{initial}</button>
+            {open && (
+                <div className="lp-nav-dropdown">
+                    <div className="lp-nav-dd-head">
+                        <div className="lp-nav-dd-label">Signed in as</div>
+                        <div className="lp-nav-dd-email">{user?.email}</div>
+                    </div>
+                    <Link to="/app"     className="lp-nav-dd-item" onClick={() => setOpen(false)}>Dashboard</Link>
+                    <Link to="/record"  className="lp-nav-dd-item" onClick={() => setOpen(false)}>New lecture</Link>
+                    <Link to="/profile" className="lp-nav-dd-item" onClick={() => setOpen(false)}>Profile</Link>
+                    <div className="lp-nav-dd-divider" />
+                    <button className="lp-nav-dd-signout" onClick={handleSignOut}>Sign out</button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function Navbar({ user }) {
+    const [menuOpen, setMenuOpen] = useState(false);
+    const { openSignIn, openSignUp } = useAuthModal();
+    return (
+        <nav className="lp-nav">
+            <Link to="/" className="lp-nav-logo">
+                <img src="/logo.png" alt="Neurativo" style={{ width: 28, height: 28, borderRadius: 7 }} />
+                <span className="lp-nav-wordmark">Neurativo</span>
+            </Link>
+            <div className="lp-nav-center">
+                <Link to="/features" className="lp-nav-lnk">Features</Link>
+                <Link to="/how-it-works" className="lp-nav-lnk">How it works</Link>
+                <Link to="/pricing" className="lp-nav-lnk">Pricing</Link>
+                <Link to="/about" className="lp-nav-lnk">About</Link>
+                <Link to="/faq" className="lp-nav-lnk">FAQ</Link>
+            </div>
+            <div className="lp-nav-right">
+                {user ? (
+                    <>
+                        <Link to="/record" className="lp-btn-dark-sm">Start recording</Link>
+                        <NavAvatar user={user} />
+                    </>
+                ) : (
+                    <>
+                        <button className="lp-btn-ghost-sm" onClick={openSignIn}>Sign in</button>
+                        <button className="lp-btn-dark-sm"  onClick={openSignUp}>Get started</button>
+                    </>
+                )}
+                <button className="lp-hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Toggle menu">
+                    {menuOpen ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    ) : (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    )}
+                </button>
+            </div>
+            {/* Mobile menu */}
+            <div className={`lp-mobile-menu ${menuOpen ? 'open' : ''}`}>
+                <Link to="/features"     className="lp-mobile-menu-lnk" onClick={() => setMenuOpen(false)}>Features</Link>
+                <Link to="/how-it-works" className="lp-mobile-menu-lnk" onClick={() => setMenuOpen(false)}>How it works</Link>
+                <Link to="/pricing"      className="lp-mobile-menu-lnk" onClick={() => setMenuOpen(false)}>Pricing</Link>
+                <Link to="/about"        className="lp-mobile-menu-lnk" onClick={() => setMenuOpen(false)}>About</Link>
+                <Link to="/faq"          className="lp-mobile-menu-lnk" onClick={() => setMenuOpen(false)}>FAQ</Link>
+                {user
+                    ? <Link to="/app" className="lp-mobile-menu-lnk" onClick={() => setMenuOpen(false)}>Dashboard</Link>
+                    : <button className="lp-mobile-menu-lnk" onClick={() => { setMenuOpen(false); openSignIn(); }}>Sign in</button>
+                }
+            </div>
+        </nav>
+    );
+}
+
+// ─── BetaStrip ────────────────────────────────────────────────────────────────
+function BetaStrip({ user }) {
+    const { openSignUp } = useAuthModal();
+    const [betaEnabled, setBetaEnabled] = useState(false);
+    const [application, setApplication] = useState(undefined); // undefined = not fetched
+    const [modalOpen, setModalOpen] = useState(false);
+
+    useEffect(() => {
+        api.get('/api/v1/beta/status').then(r => {
+            setBetaEnabled(r.data?.enabled === true);
+        }).catch(() => {});
+    }, []);
+
+    useEffect(() => {
+        if (!betaEnabled || !user) return;
+        api.get('/api/v1/beta/me').then(r => setApplication(r.data || null)).catch(() => setApplication(null));
+    }, [betaEnabled, user?.id]);
+
+    if (!betaEnabled) return null;
+
+    const status = application?.status;
+
+    return (
+        <div className="lp-beta-strip">
+            <div className="lp-beta-inner">
+                <span className="lp-beta-dot" />
+                <span className="lp-beta-text">
+                    <strong>Beta Testing Open</strong> — 20 spots · 1 free week of Student plan · No credit card.
+                </span>
+                {status === 'pending' && (
+                    <span className="lp-beta-chip pending">Application pending</span>
+                )}
+                {status === 'approved' && (
+                    <span className="lp-beta-chip approved">Beta active</span>
+                )}
+                {status === 'rejected' && null}
+                {(application === null || (!status && application !== undefined)) && (
+                    <button className="lp-beta-apply" onClick={() => setModalOpen(true)}>
+                        Apply now →
+                    </button>
+                )}
+                {application === undefined && !user && (
+                    <button className="lp-beta-apply" onClick={openSignUp}>
+                        Apply now →
+                    </button>
+                )}
+            </div>
+            {modalOpen && (
+                <BetaApplyModal
+                    onClose={() => { setModalOpen(false); }}
+                    user={user}
+                    initialApplication={application || null}
+                />
+            )}
+        </div>
+    );
+}
+
+function Hero({ user }) {
+    const { openSignUp } = useAuthModal();
+    return (
+        <section className="lp-hero">
+            <div className="lp-eyebrow">
+                <span className="lp-eyebrow-dot" />
+                Now in early access
+            </div>
+            <h1 className="lp-h1">
+                Every lecture,{' '}
+                <em className="lp-h1-em">captured</em>
+                {' '}and understood
+            </h1>
+            <p className="lp-hero-sub">
+                Neurativo records your lecture, transcribes every word, and builds structured
+                summaries in real time — so you can focus on learning, not writing.
+            </p>
+            <div className="lp-hero-btns">
+                {user ? (
+                    <Link to="/record" className="lp-btn-dark-md">Start recording <IconArrow /></Link>
+                ) : (
+                    <button className="lp-btn-dark-md" onClick={openSignUp}>Start recording free <IconArrow /></button>
+                )}
+                {user
+                    ? <Link to="/app" className="lp-btn-ghost-md">Go to dashboard</Link>
+                    : <Link to="/how-it-works" className="lp-btn-ghost-md">See how it works</Link>
+                }
+            </div>
+            <p className="lp-proof">Free to start · No credit card required · 40+ languages</p>
+        </section>
+    );
+}
+
+function NASTSection() {
+    const [fired, setFired] = useState(false);
+    const ref = useRef(null);
+
+    useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        const obs = new IntersectionObserver(
+            ([entry]) => { if (entry.isIntersecting) { setFired(true); obs.disconnect(); } },
+            { threshold: 0.3 }
+        );
+        obs.observe(el);
+        return () => obs.disconnect();
+    }, []);
+
+    const signals = [
+        { name: 'Semantic Divergence', val: 0.82, weight: '50%', color: '#818cf8' },
+        { name: 'Novelty Drift',       val: 0.61, weight: '30%', color: '#38bdf8' },
+        { name: 'Momentum',            val: 0.34, weight: '20%', color: '#fb923c' },
+    ];
+    const composite = 0.71;
+
+    return (
+        <div className="lp-nast-wrap" ref={ref}>
+            <div className="lp-nast-inner">
+                {/* Left — copy */}
+                <div className="lp-nast-left">
+                    <div className="lp-nast-badge">
+                        <span className="lp-nast-badge-dot" />
+                        Proprietary algorithm
+                    </div>
+                    <h2 className="lp-nast-h2">
+                        Summaries that know<br />
+                        <span>when the topic changes.</span>
+                    </h2>
+                    <p className="lp-nast-sub">
+                        Most tools split summaries by time. N.A.S.T. — our Neurativo Adaptive Section Trigger — detects genuine topic shifts in real time using three semantic signals. Each section of your summary maps to a real section of thought.
+                    </p>
+                </div>
+
+                {/* Right — signal visualiser */}
+                <div className="lp-nast-right">
+                    {signals.map((s) => (
+                        <div key={s.name} className="lp-nast-signal">
+                            <div className="lp-nast-signal-head">
+                                <span className="lp-nast-signal-name">{s.name}</span>
+                                <span className="lp-nast-signal-val">{fired ? s.val.toFixed(2) : '0.00'} · {s.weight}</span>
+                            </div>
+                            <div className="lp-nast-bar-bg">
+                                <div
+                                    className="lp-nast-bar-fill"
+                                    style={{
+                                        width: fired ? `${s.val * 100}%` : '0%',
+                                        background: s.color,
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    ))}
+
+                    <div className="lp-nast-divider" />
+
+                    {/* Composite */}
+                    <div>
+                        <div className="lp-nast-composite-head">
+                            <span className="lp-nast-composite-label">Composite score</span>
+                            <span className="lp-nast-composite-val">{fired ? composite.toFixed(2) : '0.00'} &gt; 0.55</span>
+                        </div>
+                        <div className="lp-nast-composite-bar-bg">
+                            <div
+                                className="lp-nast-composite-fill"
+                                style={{ width: fired ? `${composite * 100}%` : '0%' }}
+                            />
+                        </div>
+                        {fired && (
+                            <div className="lp-nast-trigger">
+                                <span className="lp-nast-trigger-dot" />
+                                Section boundary triggered — summary generated
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+function VisionSection() {
+    return (
+        <div className="lp-vision-wrap">
+            <div className="lp-vision-inner">
+                {/* Left — copy */}
+                <div>
+                    <div className="lp-vision-badge">
+                        <span className="lp-vision-badge-dot" />
+                        Where this is going
+                    </div>
+                    <h2 className="lp-vision-h2">
+                        Today, it captures your lecture.<br />
+                        <span>Tomorrow, it guides your learning.</span>
+                    </h2>
+                    <p className="lp-vision-sub">
+                        We built Neurativo to solve a problem every student knows — you can't fully listen, take notes, and understand at the same time. That's where we started.
+                        <br /><br />
+                        But a lecture is just the beginning of learning. The gap between hearing something and truly knowing it is where most students fall behind. We're working on closing that gap.
+                    </p>
+                </div>
+
+                {/* Right — timeline */}
+                <div className="lp-vtl">
+                    <div className="lp-vtl-item">
+                        <div className="lp-vtl-dot-wrap"><div className="lp-vtl-dot active" /></div>
+                        <div>
+                            <div className="lp-vtl-label">Now</div>
+                            <div className="lp-vtl-title active">Live lecture intelligence</div>
+                            <div className="lp-vtl-desc active">Live transcription, smart notes, flashcards, quiz, Q&amp;A — built as your professor speaks.</div>
+                        </div>
+                    </div>
+                    <div className="lp-vtl-item">
+                        <div className="lp-vtl-dot-wrap"><div className="lp-vtl-dot active" /></div>
+                        <div>
+                            <div className="lp-vtl-label">In progress</div>
+                            <div className="lp-vtl-title active">Adaptive learning</div>
+                            <div className="lp-vtl-desc active">Spaced repetition, concept maps, exam simulation, and weak-spot identification across all your lectures.</div>
+                        </div>
+                    </div>
+                    <div className="lp-vtl-item">
+                        <div className="lp-vtl-dot-wrap"><div className="lp-vtl-dot future" /></div>
+                        <div>
+                            <div className="lp-vtl-label">On the horizon</div>
+                            <div className="lp-vtl-title">Learning that continues after class ends</div>
+                            <div className="lp-vtl-desc">A learning system that understands what you've learned, what you've revised, and what still needs attention.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function Mockup() {
+    return (
+        <div className="lp-mockup-wrap">
+            <div className="lp-browser">
+                {/* Title bar */}
+                <div className="lp-browser-bar">
+                    <div className="lp-browser-dots">
+                        <div className="lp-browser-dot" style={{ background: '#ff5f57' }} />
+                        <div className="lp-browser-dot" style={{ background: '#febc2e' }} />
+                        <div className="lp-browser-dot" style={{ background: '#28c840' }} />
+                    </div>
+                    <div className="lp-url-bar">
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2.5" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        <span className="lp-url-text">neurativo.vercel.app/record</span>
+                    </div>
+                </div>
+                {/* Body */}
+                <div className="lp-browser-body">
+                    {/* Transcript panel */}
+                    <div className="lp-t-panel">
+                        <div className="lp-panel-lbl">Transcript</div>
+                        <div className="lp-live-badge">
+                            <span className="lp-live-dot" />
+                            Live
+                        </div>
+                        <div className="lp-seg">
+                            The cell membrane is a selectively permeable lipid bilayer. It controls what enters and exits the cell using a combination of passive and active transport mechanisms.
+                        </div>
+                        <div className="lp-seg">
+                            Passive transport requires no energy — molecules move down their concentration gradient. Osmosis is a specific type involving water molecules across a semi-permeable membrane.
+                        </div>
+                        <div className="lp-seg live">
+                            Active transport, on the other hand, moves molecules against their gradient and requires ATP. The sodium-potassium pump is the classic example — it maintains cell potential by pumping three Na⁺ out for every two K⁺ in.
+                        </div>
+                    </div>
+                    {/* Summary panel */}
+                    <div className="lp-s-panel">
+                        <div className="lp-panel-lbl">Summary</div>
+                        <div className="lp-sum-card">
+                            <div className="lp-sum-title">Cell Membrane Structure</div>
+                            <div className="lp-sum-body">
+                                Selectively permeable lipid bilayer regulating molecular traffic via passive diffusion and energy-dependent active transport.
+                            </div>
+                            <div className="lp-pills">
+                                <span className="lp-pill">lipid bilayer</span>
+                                <span className="lp-pill">selective permeability</span>
+                                <span className="lp-pill">osmosis</span>
+                            </div>
+                        </div>
+                        <div className="lp-sum-card">
+                            <div className="lp-sum-title">Active vs. Passive Transport</div>
+                            <div className="lp-sum-body">
+                                Passive transport is gradient-driven; active transport uses ATP to move molecules against their gradient.
+                            </div>
+                            <div className="lp-pills">
+                                <span className="lp-pill">Na⁺/K⁺ pump</span>
+                                <span className="lp-pill">ATP</span>
+                                <span className="lp-pill">concentration gradient</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function StatsBar() {
+    const stats = [
+        { n: '<3s',  l: 'Transcript latency' },
+        { n: '3×',   l: 'Faster than manual notes' },
+        { n: '99%',  l: 'Transcription accuracy' },
+        { n: '10k+', l: 'Lectures transcribed' },
+    ];
+    return (
+        <div className="lp-stats-wrap">
+            <div className="lp-stats-grid">
+                {stats.map(s => (
+                    <div key={s.l} className="lp-stat">
+                        <div className="lp-stat-n">{s.n}</div>
+                        <div className="lp-stat-l">{s.l}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function Features() {
+    const feats = [
+        { icon: <IconMic />,    title: 'Real-time transcription',    desc: 'Every word captured as it happens, with no perceptible delay. Focus on the lecture — the transcript writes itself.' },
+        { icon: <IconLayers />, title: 'Hierarchical summaries',     desc: 'Summaries build progressively as the lecture unfolds — section by section, rolling into a complete master overview.' },
+        { icon: <IconChat />,   title: 'AI Q&A',                     desc: 'Ask any question about the lecture. Neurativo finds the most relevant moments and answers directly from your content.' },
+        { icon: <IconBulb />,   title: 'Smart Explain',              desc: 'Select any phrase. Get a plain-English explanation, a concrete analogy, and a step-by-step breakdown instantly.' },
+        { icon: <IconDoc />,    title: 'One-click PDF export',       desc: 'A polished report with your transcript, summaries, key concepts, and Q&A history — ready to download in seconds.' },
+        { icon: <IconCloud />,  title: 'Resilient by design',        desc: 'Recording continues even when your connection drops. Audio is buffered locally and synced automatically when you reconnect.' },
+    ];
+    return (
+        <section id="features" className="lp-sec">
+            <div className="lp-sec-eye">Features</div>
+            <h2 className="lp-sec-h2">Everything a lecture needs</h2>
+            <p className="lp-sec-sub">Built for the pace of live teaching — every feature is designed to work without interrupting your attention.</p>
+            <div className="lp-feat-grid">
+                {feats.map(f => (
+                    <div key={f.title} className="lp-feat-cell">
+                        <div className="lp-feat-icon">{f.icon}</div>
+                        <div className="lp-feat-title">{f.title}</div>
+                        <div className="lp-feat-desc">{f.desc}</div>
+                    </div>
+                ))}
+            </div>
+        </section>
+    );
+}
+
+function HowItWorks() {
+    const steps = [
+        { n: '01', title: 'Open and record',       desc: 'Tap record. Neurativo starts capturing immediately — no setup, no configuration, no accounts to link.' },
+        { n: '02', title: 'Watch it unfold',        desc: 'The transcript appears as the lecturer speaks. Summaries build section by section. A complete overview takes shape automatically.' },
+        { n: '03', title: 'Review and export',      desc: 'When the lecture ends, ask questions, select text for explanations, and download your PDF report with a single click.' },
+    ];
+    return (
+        <section id="how-it-works" className="lp-sec">
+            <div className="lp-sec-eye">How it works</div>
+            <h2 className="lp-sec-h2">Three steps, no learning curve</h2>
+            <p className="lp-sec-sub">Neurativo is designed to disappear into the background so you can stay focused on the lecture.</p>
+            <div className="lp-steps">
+                {steps.map(s => (
+                    <div key={s.n} className="lp-step">
+                        <div className="lp-step-n">{s.n}</div>
+                        <div className="lp-step-title">{s.title}</div>
+                        <div className="lp-step-desc">{s.desc}</div>
+                    </div>
+                ))}
+            </div>
+        </section>
+    );
+}
+
+function Testimonials() {
+    const quotes = [
+        {
+            text: "I used to miss half the lecture trying to keep up with notes. With Neurativo I just focus and review the summary after. It's honestly changed how I study.",
+            name: 'Sara M.',
+            school: 'Biomedical Science student',
+            initials: 'SM',
+        },
+        {
+            text: "The AI Q&A is incredible. I asked a question about a concept from 45 minutes into the lecture and it found the exact passage and explained it clearly.",
+            name: 'James K.',
+            school: 'Computer Science student',
+            initials: 'JK',
+        },
+        {
+            text: "My Arabic lectures finally have perfect transcripts. Neurativo handles the language switch mid-sentence without missing a word. Nothing else comes close.",
+            name: 'Nora A.',
+            school: 'Medicine student',
+            initials: 'NA',
+        },
+    ];
+    return (
+        <section className="lp-sec">
+            <div className="lp-sec-eye">What students say</div>
+            <h2 className="lp-sec-h2">Used in lectures every day</h2>
+            <p className="lp-sec-sub">Students rely on Neurativo to keep up in fast-paced lectures and review them later.</p>
+            <div className="lp-testi-grid">
+                {quotes.map(q => (
+                    <div key={q.name} className="lp-testi-card">
+                        <div className="lp-testi-stars">
+                            {[...Array(5)].map((_, i) => <span key={i} className="lp-testi-star">★</span>)}
+                        </div>
+                        <p className="lp-testi-quote">"{q.text}"</p>
+                        <div className="lp-testi-author">
+                            <div className="lp-testi-avatar">{q.initials}</div>
+                            <div>
+                                <div className="lp-testi-name">{q.name}</div>
+                                <div className="lp-testi-school">{q.school}</div>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </section>
+    );
+}
+
+function FAQ() {
+    const [open, setOpen] = useState(null);
+    const items = [
+        {
+            q: 'How does Neurativo transcribe in real time?',
+            a: 'Neurativo continuously captures audio from your microphone and transcribes it in real time. The delay from speech to text appearing on screen is typically under 3 seconds. Everything is automatic — just press record.',
+        },
+        {
+            q: 'Does it work with any language?',
+            a: 'Yes. Neurativo supports over 50 languages and automatically detects the language being spoken. If your lecturer switches languages mid-session, Neurativo handles it without any configuration.',
+        },
+        {
+            q: 'What happens if I lose my internet connection?',
+            a: "Recording continues uninterrupted even when you go offline. Audio is buffered locally and uploaded automatically when your connection returns. You'll see a banner letting you know — nothing is ever lost.",
+        },
+        {
+            q: 'How accurate are the summaries?',
+            a: 'Summaries are generated directly from your transcript, so accuracy reflects how clearly the lecture was captured. In typical classroom environments with a clear speaker, summary quality is very high. Background noise may occasionally affect transcription in loud rooms.',
+        },
+        {
+            q: 'Can I ask questions about a lecture I recorded last week?',
+            a: 'Yes. Every lecture is saved and searchable. Open any past lecture from your dashboard, go to the Ask tab, and ask questions — the AI searches the full transcript semantically to find the most relevant answer.',
+        },
+        {
+            q: "What's in the PDF export?",
+            a: "The PDF includes a cover page with the lecture title and date, the full transcript, all section summaries, key concepts, and your Q&A history. It's formatted cleanly for printing or saving to Notion.",
+        },
+        {
+            q: 'Is my data private?',
+            a: 'Your lectures are stored in your personal account and are private by default. You can optionally share a lecture via a unique link — recipients can only view, not edit. You can revoke sharing at any time.',
+        },
+        {
+            q: "What's the difference between Free, Student, and Pro?",
+            a: 'Free gives 5 starter credits, 30-min live sessions, 60-min imports, a 2-section summary, and a watermarked PDF preview of the first 2 sections — enough to see the quality before committing. Student ($9.99/mo · Rs. 3,050) includes 15 credits/month, 3-hr sessions, full summaries, full PDF export (no watermark), Q&A, and sharing. Pro ($19.99/mo · Rs. 6,100) includes 30 credits/month, 4-hr sessions, 40 hrs/month ceiling, priority processing, and early feature access. All plans use 1 credit per 30-min block — extra packs available anytime.',
+        },
+    ];
+    return (
+        <section id="faq" className="lp-sec">
+            <div className="lp-sec-eye">FAQ</div>
+            <h2 className="lp-sec-h2">Questions we get asked</h2>
+            <p className="lp-sec-sub">Everything you need to know before hitting record.</p>
+            <div className="lp-faq">
+                {items.map((item, i) => (
+                    <div key={i} className="lp-faq-item">
+                        <button className="lp-faq-q" onClick={() => setOpen(open === i ? null : i)}>
+                            <span>{item.q}</span>
+                            <svg className={`lp-faq-chevron ${open === i ? 'open' : ''}`} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="6 9 12 15 18 9"/>
+                            </svg>
+                        </button>
+                        {open === i && <div className="lp-faq-a">{item.a}</div>}
+                    </div>
+                ))}
+            </div>
+        </section>
+    );
+}
+
+function PlanItem({ text, no }) {
+    return (
+        <li className={'lp-plan-item' + (no ? ' no' : '')}>
+            {no
+                ? <span className="lp-no">✕</span>
+                : <span className="lp-check"><IconCheck /></span>
+            }
+            {text}
+        </li>
+    );
+}
+
+function Pricing({ user }) {
+    const { openSignUp } = useAuthModal();
+    const [checkoutLoading, setCheckoutLoading] = React.useState(null);
+
+    const handlePlanCTA = async (plan) => {
+        if (!user) { openSignUp(); return; }
+        setCheckoutLoading(plan);
+        try {
+            const res = await api.post('/api/v1/billing/checkout', { plan });
+            const url = res.data.checkout_url;
+            if (!url) throw new Error('No checkout URL returned');
+            window.location.href = url;
+        } catch (e) {
+            console.error('Checkout error', e);
+            const msg = e?.response?.data?.detail || e?.message || 'Could not start checkout. Please try again.';
+            alert(msg);
+            setCheckoutLoading(null);
+        }
+    };
+    return (
+        <section id="pricing" className="lp-sec">
+            <div className="lp-sec-eye">Pricing</div>
+            <h2 className="lp-sec-h2">Simple, honest pricing</h2>
+            <p className="lp-sec-sub">Start free. Upgrade when you need more. No hidden fees, no surprise charges.</p>
+            <div className="lp-pricing">
+
+                {/* Free */}
+                <div className="lp-plan">
+                    <div className="lp-plan-name">Free</div>
+                    <div className="lp-plan-tagline">Try it — no card needed</div>
+                    <div className="lp-price-row">
+                        <span className="lp-price-sign">$</span>
+                        <span className="lp-price-big">0</span>
+                    </div>
+                    <div className="lp-price-mo">forever</div>
+                    <div className="lp-price-lkr">Rs. 0</div>
+                    <div className="lp-plan-div" />
+                    <ul className="lp-plan-items">
+                        <PlanItem text="5 starter credits included" />
+                        <PlanItem text="Live recording · 30 min/session" />
+                        <PlanItem text="Audio imports · 60 min/file" />
+                        <PlanItem text="AI transcription · 40+ languages" />
+                        <PlanItem text="Basic AI summary (2 sections)" />
+                        <PlanItem text="PDF preview · 2 sections · watermarked" />
+                        <PlanItem no text="Full summary · all sections" />
+                        <PlanItem no text="Full PDF · no watermark" />
+                        <PlanItem no text="Q&A chat" />
+                        <PlanItem no text="Shareable links" />
+                    </ul>
+                    <button className="lp-btn-plan-outline" onClick={openSignUp}>Get started free</button>
+                </div>
+
+                {/* Student — featured */}
+                <div className="lp-plan-feat">
+                    <div className="lp-plan-badge">Most Popular</div>
+                    <div className="lp-plan-name">Student</div>
+                    <div className="lp-plan-tagline">For serious students</div>
+                    <div className="lp-price-row">
+                        <span className="lp-price-sign">$</span>
+                        <span className="lp-price-big">9.99</span>
+                    </div>
+                    <div className="lp-price-mo">per month</div>
+                    <div className="lp-price-lkr">Rs. 3,050 / month</div>
+                    <div className="lp-plan-div" />
+                    <ul className="lp-plan-items">
+                        <PlanItem text="15 credits / month included" />
+                        <PlanItem text="Unlimited live sessions · 3 hrs max" />
+                        <PlanItem text="Unlimited imports · 3 hrs max/file" />
+                        <PlanItem text="25 hours / month total" />
+                        <PlanItem text="Full AI summary · all sections" />
+                        <PlanItem text="PDF report export" />
+                        <PlanItem text="Q&A chat with your lecture" />
+                        <PlanItem text="Shareable lecture links" />
+                        <PlanItem text="Real-world analogies & key stats" />
+                        <PlanItem text="40+ languages" />
+                    </ul>
+                    <button className="lp-btn-plan-dark" onClick={() => handlePlanCTA('student')} disabled={!!checkoutLoading}>
+                        {checkoutLoading === 'student' ? 'Redirecting…' : 'Start Student'}
+                    </button>
+                </div>
+
+                {/* Pro */}
+                <div className="lp-plan">
+                    <div className="lp-plan-name">Pro</div>
+                    <div className="lp-plan-tagline">For researchers & power users</div>
+                    <div className="lp-price-row">
+                        <span className="lp-price-sign">$</span>
+                        <span className="lp-price-big">19.99</span>
+                    </div>
+                    <div className="lp-price-mo">per month</div>
+                    <div className="lp-price-lkr">Rs. 6,100 / month</div>
+                    <div className="lp-plan-div" />
+                    <ul className="lp-plan-items">
+                        <PlanItem text="30 credits / month included" />
+                        <PlanItem text="Unlimited live sessions · 4 hrs max/session" />
+                        <PlanItem text="Unlimited imports · 4 hrs max/file" />
+                        <PlanItem text="40 hrs / month hard ceiling" />
+                        <PlanItem text="Everything in Student" />
+                        <PlanItem text="Priority processing" />
+                        <PlanItem text="Early access to new features" />
+                    </ul>
+                    <button className="lp-btn-plan-outline" onClick={() => handlePlanCTA('pro')} disabled={!!checkoutLoading}>
+                        {checkoutLoading === 'pro' ? 'Redirecting…' : 'Start Pro'}
+                    </button>
+                </div>
+
+            </div>
+
+            {/* Credits callout */}
+            <div style={{ marginTop: 16, padding: '20px 24px', border: '1.5px solid #f0ede8', borderRadius: 14, background: '#fff' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 9, background: '#f5f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 16 }}>⚡</div>
+                    <div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: '#1a1a1a' }}>Pay-per-lecture credits</div>
+                        <div style={{ fontSize: 12, color: '#888' }}>No subscription needed · credits scale with duration · never expire</div>
+                        <div style={{ fontSize: 11, color: '#b0aca6', marginTop: 3 }}>1 credit per 30-min block (rounded up) · ≤30 min = 1 cr · 31–60 min = 2 cr · 61–90 min = 3 cr · 4-hr lecture = 8 cr</div>
+                    </div>
+                </div>
+                <div className="lp-credits-grid">
+                    <div className="lp-credit-pack">
+                        <div className="lp-credit-pack-label">Starter</div>
+                        <div className="lp-credit-pack-credits">10 credits</div>
+                        <div className="lp-credit-pack-price">$4.99</div>
+                        <div className="lp-credit-pack-per">Rs. 1,520 · $0.50 each</div>
+                    </div>
+                    <div className="lp-credit-pack best">
+                        <div className="lp-credit-pack-label">Best value</div>
+                        <div className="lp-credit-pack-credits">30 credits</div>
+                        <div className="lp-credit-pack-price">$11.99</div>
+                        <div className="lp-credit-pack-per">Rs. 3,660 · $0.40 each</div>
+                    </div>
+                    <div className="lp-credit-pack">
+                        <div className="lp-credit-pack-label">Power pack</div>
+                        <div className="lp-credit-pack-credits">60 credits</div>
+                        <div className="lp-credit-pack-price">$21.99</div>
+                        <div className="lp-credit-pack-per">Rs. 6,700 · $0.37 each</div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Teams banner */}
+            <a
+                href="https://neurativo.vercel.app"
+                rel="nofollow noopener noreferrer"
+                style={{
+                    display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap',
+                    marginTop: 16, padding: '20px 24px',
+                    border: '1.5px solid #f0ede8', borderRadius: 14,
+                    background: '#fff', textDecoration: 'none', color: 'inherit',
+                    transition: 'border-color .15s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = '#1a1a1a'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = '#f0ede8'}
+            >
+                <div style={{ fontSize: 22 }}>👥</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2 }}>Neurativo Teams — for organizations</div>
+                    <div style={{ fontSize: 13, color: '#6b6b6b' }}>
+                        Manage seats for your whole team. Student seats from $8/seat · Pro seats from $16/seat · Invite by email, link, or domain.
+                    </div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#1a1a1a', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    Learn more <span>→</span>
+                </div>
+            </a>
+
+        </section>
+    );
+}
+
+function CTASection() {
+    const { openSignUp } = useAuthModal();
+    return (
+        <div className="lp-cta-wrap">
+            <div className="lp-cta">
+                <h2 className="lp-cta-h2">Your next lecture is waiting</h2>
+                <p className="lp-cta-sub">
+                    Join thousands of students who never miss a detail. Free to start, no credit card required.
+                </p>
+                <button className="lp-btn-light" onClick={openSignUp}>Start recording free</button>
+            </div>
+        </div>
+    );
+}
+
+function About() {
+    return (
+        <section id="about" className="lp-sec">
+            <p className="lp-sec-eye">About Neurativo</p>
+            <div className="lp-about-quote">
+                <h2 className="lp-about-quote-text">The AI teacher for the world.</h2>
+                <p className="lp-about-quote-sub">Delivering live, lecture-quality education on any topic, anywhere.</p>
+            </div>
+            <div className="lp-about-cols">
+                <div className="lp-about-col">
+                    <p className="lp-about-col-label">The Problem</p>
+                    <p className="lp-about-col-text">
+                        Access to a great teacher is the single greatest predictor of learning outcomes — yet it remains one of the world's most unequally distributed resources. Billions of learners rely on static textbooks, passive videos, or overcrowded classrooms. There is no intelligent system that can teach a subject from first principles, adapt to the learner in real time, and do so at the depth and rigor of a world-class university lecture.
+                    </p>
+                </div>
+                <div className="lp-about-col">
+                    <p className="lp-about-col-label">Our Solution</p>
+                    <p className="lp-about-col-text">
+                        Neurativo is an AI educator platform that generates live, lecture-based summaries and high-quality academic content on any topic — combining the clarity of a great teacher with the depth of a research library. We are building toward a fully autonomous AI teacher: capable of structuring curricula, explaining concepts from first principles, and adapting to each learner in real time.
+                    </p>
+                </div>
+            </div>
+            <p className="lp-about-founders">
+                Founded by{' '}
+                <a href="https://linkedin.com/in/shazadarshad" target="_blank" rel="noopener noreferrer" className="lp-about-founder-lnk">Shazad Arshad</a>
+                {' '}&amp;{' '}
+                <a href="https://linkedin.com/in/shariffahamed" target="_blank" rel="noopener noreferrer" className="lp-about-founder-lnk">Shariff Ahamed</a>
+            </p>
+        </section>
+    );
+}
+
+function Footer() {
+    return (
+        <footer className="lp-footer">
+            <Link to="/" className="lp-footer-brand-wrap">
+                <img src="/logo.png" alt="Neurativo" style={{ width: 26, height: 26, borderRadius: 6 }} />
+                <span className="lp-footer-name">Neurativo</span>
+            </Link>
+            <div className="lp-footer-lnks">
+                <Link to="/features" className="lp-footer-lnk">Features</Link>
+                <Link to="/pricing" className="lp-footer-lnk">Pricing</Link>
+                <Link to="/about" className="lp-footer-lnk">About</Link>
+                <Link to="/privacy" className="lp-footer-lnk">Privacy</Link>
+                <Link to="/terms" className="lp-footer-lnk">Terms</Link>
+            </div>
+            <div className="lp-footer-copy">© {new Date().getFullYear()} Neurativo. All rights reserved.</div>
+        </footer>
+    );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+export default function LandingPage({ user }) {
+    const location = useLocation();
+
+    // When LandingPage is rendered at a section route (/features, /pricing etc.)
+    // the parent page (FeaturesPage etc.) already called useSEO with the right
+    // title/description. We only supply our own when we're at the root URL.
+    const isRoot = location.pathname === '/';
+    useSEO({
+        title: isRoot ? null : undefined,  // null = use default "Neurativo — AI Education Platform"; undefined = don't overwrite
+        description: isRoot ? 'Neurativo is an AI-powered educational platform for students. Record live lectures and instantly get AI summaries, flashcards, quizzes, concept maps, and Q&A — transforming education with intelligence. Free to start.' : undefined,
+        canonicalPath: location.pathname,
+        keywords: isRoot ? 'AI education platform, live lecture AI, AI learning platform, AI lecture notes, real-time lecture transcription, lecture summary generator, AI study tools, automatic lecture notes, student AI assistant, flashcard generator, exam prep AI, concept map AI' : undefined,
+    });
+
+    // Speakable schema — helps AI engines and voice assistants identify citable content
+    useStructuredData(isRoot ? {
+        '@context': 'https://schema.org',
+        '@type': 'WebPage',
+        '@id': 'https://neurativo.vercel.app/#webpage',
+        'speakable': {
+            '@type': 'SpeakableSpecification',
+            'cssSelector': ['.lp-hero-h1', '.lp-hero-sub', '.lp-section-label', 'h2', 'h3']
+        },
+        'url': 'https://neurativo.vercel.app'
+    } : null);
+
+    // Pageview beacon
+    useEffect(() => { trackPageview('landing'); }, []);
+
+    // Scroll to section when navigated from a section route (e.g. /pricing → /)
+    useEffect(() => {
+        const sectionId = location.state?.scrollTo;
+        if (!sectionId) return;
+        const el = document.getElementById(sectionId);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        // Clear the state so back-nav doesn't re-scroll
+        window.history.replaceState({}, '');
+    }, [location.state?.scrollTo]);
+
+    return (
+        <>
+            <style>{CSS}</style>
+            <div className="lp">
+                <Navbar user={user} />
+                <main>
+                    <Hero user={user} />
+                    <BetaStrip user={user} />
+                    <Mockup />
+                    <StatsBar />
+                    <Features />
+                    <NASTSection />
+                    <HowItWorks />
+                    <VisionSection />
+                    <Testimonials />
+                    <Pricing user={user} />
+                    <About />
+                    <FAQ />
+                    <CTASection />
+                </main>
+                <Footer />
+            </div>
+        </>
+    );
+}
