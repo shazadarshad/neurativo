@@ -6,13 +6,13 @@
     and a Q&amp;A that only answers from <em>that</em> class.
   </p>
   <p>
-    <a href="https://neurativo.vercel.app"><strong>neurativo.vercel.app</strong></a>
+    <a href="https://neurativo.com"><strong>neurativo.com</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://neurativo.vercel.app/features">Features</a>
+    <a href="https://neurativo.com/features">Features</a>
     &nbsp;·&nbsp;
-    <a href="https://neurativo.vercel.app/pricing">Pricing</a>
+    <a href="https://neurativo.com/pricing">Pricing</a>
     &nbsp;·&nbsp;
-    <a href="https://neurativo.vercel.app/faq">FAQ</a>
+    <a href="https://neurativo.com/faq">FAQ</a>
   </p>
   <p>
     <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white" alt="React" />
@@ -31,7 +31,8 @@
 
 I built Neurativo as a real product, not a tutorial app. Students record (or upload) a lecture; the backend transcribes it with Whisper, writes structured notes, and generates study tools. Auth, billing, credits, and an admin panel are all in here.
 
-The public site for this repo is **[neurativo.vercel.app](https://neurativo.vercel.app)**. Sign-in is live Clerk. The API is the live FastAPI service.
+**Live product:** [neurativo.com](https://neurativo.com)  
+This GitHub repo is the source, for reading. Production stays on the Neurativo Vercel + Railway accounts — this repo is not the deploy target.
 
 ---
 
@@ -69,7 +70,7 @@ The public site for this repo is **[neurativo.vercel.app](https://neurativo.verc
 </tr>
 </table>
 
-Try it in this order: [landing](https://neurativo.vercel.app) → Sign in → **New lecture** or open one from the dashboard → tabs on the right (Notes, Ask, Cards, Quiz, Exam).
+Try it in this order: [landing](https://neurativo.com) → Sign in → **New lecture** or open one from the dashboard → tabs on the right (Notes, Ask, Cards, Quiz, Exam).
 
 ---
 
@@ -177,16 +178,11 @@ Docker image is `backend/Dockerfile` (ffmpeg + Chromium, port 8080).
 
 ---
 
-## Deploy notes
+## Production vs this repo
 
-This copy is wired for **https://neurativo.vercel.app**, not neurativo.com.
+The shipped app runs on **neurativo.com** (frontend on Vercel, API on Railway). That deploy is connected to the Neurativo org — leave it.
 
-| Host | Root directory | Env that has to exist |
-| --- | --- | --- |
-| Vercel | `frontend` | `VITE_CLERK_PUBLISHABLE_KEY` |
-| Railway | `backend` | Clerk JWKS, OpenAI, Supabase, plus Dodo/Resend if you want billing/email |
-
-For sign-in to return to this host, Clerk must allow `https://neurativo.vercel.app` as an origin and redirect URL. The API CORS list must include that origin too (`ALLOWED_ORIGINS`).
+This repository (`shazadarshad/neurativo`) is the public source for recruiters. Cloning it does not change production.
 
 ---
 
@@ -213,4 +209,4 @@ Coverage is strongest around notes generation, credits, billing gates, and PDF h
 
 ---
 
-Built by [Shazad Arshad](mailto:hello@neurativo.com) and Shariff Ahamed. Source here is for reading and for this Vercel deploy. See `LICENSE`.
+Built by [Shazad Arshad](mailto:hello@neurativo.com) and Shariff Ahamed. Source here is for reading. See `LICENSE`.
