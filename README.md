@@ -1,155 +1,105 @@
 <div align="center">
   <img src="frontend/public/logo.png" width="72" alt="Neurativo logo" />
+
   <h1>Neurativo</h1>
+  <h3>AI-Powered Learning Platform</h3>
+
   <p>
-    Record a lecture. Walk out with notes, flashcards, a quiz,<br />
-    and a Q&amp;A that only answers from <em>that</em> class.
+    Record a lecture and turn it into structured notes, flashcards, quizzes,<br />
+    and lecture-based Q&amp;A.
   </p>
+
   <p>
-    <a href="https://neurativo.com"><strong>neurativo.com</strong></a>
-    &nbsp;·&nbsp;
-    <a href="https://neurativo.com/features">Features</a>
-    &nbsp;·&nbsp;
-    <a href="https://neurativo.com/pricing">Pricing</a>
-    &nbsp;·&nbsp;
-    <a href="https://neurativo.com/faq">FAQ</a>
+    <a href="https://www.neurativo.site"><strong>Live Demo</strong></a>
   </p>
+
   <p>
     <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white" alt="React" />
     <img src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white" alt="Vite" />
     <img src="https://img.shields.io/badge/FastAPI-Python-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
-    <img src="https://img.shields.io/badge/Clerk-Auth-6C47FF?logo=clerk&logoColor=white" alt="Clerk" />
+    <img src="https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?logo=supabase&logoColor=white" alt="Supabase" />
     <img src="https://img.shields.io/badge/OpenAI-Whisper%20%2B%20GPT-412991?logo=openai&logoColor=white" alt="OpenAI" />
   </p>
 </div>
 
-<br />
+---
 
-<p align="center">
-  <img src="frontend/public/og.png" width="280" alt="Neurativo" />
-</p>
+## About
 
-I built Neurativo as a real product, not a tutorial app. Students record (or upload) a lecture; the backend transcribes it with Whisper, writes structured notes, and generates study tools. Auth, billing, credits, and an admin panel are all in here.
+Neurativo is a learning platform built to help students get more out of their lectures.
 
-**Live product:** [neurativo.com](https://neurativo.com)  
-This GitHub repo is the source, for reading. Production stays on the Neurativo Vercel + Railway accounts — this repo is not the deploy target.
+Users can record or upload a lecture, generate a transcript and structured notes, then use that lecture to create study materials and ask questions.
+
+This is a practical full-stack project covering AI-powered apps, web development, and backend systems.
+
+> **Development note:** Neurativo was developed using AI-assisted coding, then tested, debugged, and refined by hand.
 
 ---
 
-## What you can do on the site
+## Features
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
-**As a student**
-
-- Sign in / sign up
-- Record live (mic or a browser tab)
-- Import an audio / video file
-- Read the transcript + notes
-- Ask questions grounded in the lecture
-- Flip flashcards, take a quiz, run exam prep
-- Export a PDF, share a public link
-- Buy credits or upgrade plan
-
-</td>
-<td width="50%" valign="top">
-
-**Under the hood**
-
-- Clerk JWT on every API call
-- 1 credit = 30 minutes of audio
-- Free / Student ($9.99) / Pro ($19.99)
-- Import job progress (Whisper → notes)
-- Admin: users, costs, billing, flags
-- Teams orgs (invites, seats)
-- Transactional email (Resend)
-
-</td>
-</tr>
-</table>
-
-Try it in this order: [landing](https://neurativo.com) → Sign in → **New lecture** or open one from the dashboard → tabs on the right (Notes, Ask, Cards, Quiz, Exam).
-
----
-
-## How a lecture actually moves through the app
-
-```
-Student hits Record
-        │
-        ▼
-  POST /api/v1/live/start     ← checks credits + plan limits
-        │
-        ▼
-  ~12s audio chunks  ──────►  Whisper  ──────►  transcript
-        │                         │
-        │                         ▼
-        │                   drop off-topic audio
-        │                   build notes as it goes
-        ▼
-  POST /api/v1/live/end       ← settle credits, final summary
-        │
-        ▼
-  /lecture/:id
-     Notes · Ask · Cards · Quiz · Exam · Terms · Stats
-```
-
-File import is the same idea, just async: compress → transcribe → clean → generate → save. The dashboard polls `/api/v1/jobs/:id` so you can close the tab after upload.
-
----
-
-## Stack
-
-| Layer | What |
+| | |
 | --- | --- |
-| Frontend | Vite, React 18, Tailwind, Clerk, Axios — hosted on **Vercel** |
-| Backend | FastAPI, Uvicorn — hosted on **Railway** (Docker: ffmpeg + Playwright) |
-| Auth | Clerk (hosted sign-in at `accounts.neurativo.com`, returns here) |
-| Database | Supabase (Postgres). User ids are Clerk ids, not Supabase Auth |
-| Models | OpenAI Whisper for speech, GPT for notes / Q&A / study tools |
-| Billing | Dodo Payments (subscriptions + credit packs) |
-| Email | React Email templates → Resend |
-| PDFs | Jinja template + Playwright Chromium |
+| **Lecture recording** | Record from the browser (microphone or a tab). |
+| **Lecture import** | Upload an existing audio or video file. |
+| **Transcription** | Speech-to-text with Whisper. |
+| **Structured notes** | Organised notes generated from the lecture. |
+| **Lecture Q&A** | Ask questions grounded in that lecture, not generic answers. |
+| **Flashcards** | Study cards built from the same material. |
+| **Quizzes** | Multiple-choice and short-answer checks. |
+| **Exam prep** | Extra revision questions from the lecture. |
+| **PDF export** | Download notes as a PDF. |
+| **Auth** | Sign-in with Clerk. |
 
-The browser never talks to Supabase. It talks to FastAPI with a Clerk bearer token.
+---
 
-```mermaid
-flowchart LR
-  A[Browser on Vercel] -->|Clerk JWT| B[FastAPI on Railway]
-  A -->|sign in| C[Clerk]
-  B --> D[Supabase]
-  B --> E[OpenAI]
-  B --> F[Dodo]
-  B --> G[Resend]
+## How it works
+
+```text
+Record or upload a lecture
+            ↓
+       Transcription
+            ↓
+   Lecture content is processed
+            ↓
+       Structured notes
+            ↓
+     ┌──────┼──────┐
+     ↓      ↓      ↓
+    Q&A  Cards  Quizzes
 ```
 
 ---
 
-## Repo layout
+## Tech stack
 
-```
-frontend/     Vite app          → Vercel  (root directory: frontend)
-backend/      FastAPI           → Railway (root directory: backend)
-emails/       React Email
-docs/         feature specs + implementation notes
-```
-
-Useful entry points if you are reading the code:
-
-- `frontend/src/main.jsx` — routes
-- `frontend/src/App.jsx` — live recorder
-- `frontend/src/pages/LectureView.jsx` — lecture workspace
-- `backend/app/main.py` — API mount
-- `backend/app/api/endpoints.py` — live + import + study tools
-- `backend/app/core/plans.py` — plan limits and prices
+| Area | Technology |
+| --- | --- |
+| Frontend | React, Vite, Tailwind CSS |
+| Backend | Python, FastAPI |
+| Database | Supabase / PostgreSQL |
+| Authentication | Clerk |
+| AI | OpenAI Whisper + GPT |
+| Frontend hosting | Vercel |
+| Backend hosting | Railway |
 
 ---
 
-## Run locally
+## Project structure
 
-Nothing secret is in this repo. You need your own keys.
+```text
+neurativo/
+├── frontend/     # React app (Vercel)
+├── backend/      # FastAPI API (Railway)
+├── emails/       # Transactional email templates
+└── docs/         # Specs and notes
+```
+
+---
+
+## Running locally
+
+API keys are **not** in this repo. Copy the example env files and fill in your own.
 
 **Frontend**
 
@@ -157,13 +107,10 @@ Nothing secret is in this repo. You need your own keys.
 cd frontend
 npm install
 copy .env.example .env.local
-# put your Clerk publishable key in .env.local
 npm run dev
 ```
 
-Leave `VITE_API_URL` unset to hit the live API, or point it at `http://127.0.0.1:8000` if you start the backend.
-
-**Backend** (only if you want the API on your machine)
+**Backend**
 
 ```bash
 cd backend
@@ -174,39 +121,18 @@ copy .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-Docker image is `backend/Dockerfile` (ffmpeg + Chromium, port 8080).
+---
+
+## Project status
+
+Neurativo is an ongoing project. Features and improvements may still be added.
 
 ---
 
-## Production vs this repo
+## Author
 
-The shipped app runs on **neurativo.com** (frontend on Vercel, API on Railway). That deploy is connected to the Neurativo org — leave it.
+**Shazad Arshad**  
+Aspiring software developer. Interested in Python, web development, AI, and building things people can actually use.
 
-This repository (`shazadarshad/neurativo`) is the public source for recruiters. Cloning it does not change production.
-
----
-
-## What is not in git (on purpose)
-
-| Kept out | Why |
-| --- | --- |
-| `.env` / `.env.local` | API keys, Clerk secret, Dodo, Resend |
-| `node_modules/`, `venv/` | install from lockfiles |
-| Real Clerk / OpenAI / Supabase values | they live on Vercel and Railway only |
-
-`.env.example` files are placeholders. If a scanner flags `pk_live_xxx` in the example, that is a dummy string.
-
----
-
-## Tests
-
-```bash
-cd backend
-python -m pytest tests/ -q
-```
-
-Coverage is strongest around notes generation, credits, billing gates, and PDF helpers — not a full HTTP suite against Clerk.
-
----
-
-Built by [Shazad Arshad](mailto:hello@neurativo.com) and Shariff Ahamed. Source here is for reading. See `LICENSE`.
+- LinkedIn: [linkedin.com/in/shazadarshad](https://linkedin.com/in/shazadarshad)
+- Email: [shazad.arshad189@gmail.com](mailto:shazad.arshad189@gmail.com)
