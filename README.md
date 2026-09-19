@@ -53,6 +53,45 @@ This is a practical full-stack project covering AI-powered apps, web development
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/01-landing-page.png" width="720" alt="Landing page" />
+</p>
+<p align="center"><em>Landing page</em></p>
+
+<p align="center">
+  <img src="screenshots/02-record-page.png" width="720" alt="Record page" />
+</p>
+<p align="center"><em>Live recording</em></p>
+
+<p align="center">
+  <img src="screenshots/03-summary.png" width="720" alt="Lecture notes" />
+</p>
+<p align="center"><em>Structured notes</em></p>
+
+<p align="center">
+  <img src="screenshots/04-qna.png" width="720" alt="Lecture Q&A" />
+</p>
+<p align="center"><em>Lecture Q&amp;A</em></p>
+
+<p align="center">
+  <img src="screenshots/05-flashcards.png" width="720" alt="Flashcards" />
+</p>
+<p align="center"><em>Flashcards</em></p>
+
+<p align="center">
+  <img src="screenshots/06-quiz.png" width="720" alt="Quiz" />
+</p>
+<p align="center"><em>Quiz</em></p>
+
+<p align="center">
+  <img src="screenshots/07-glossary.png" width="720" alt="Glossary" />
+</p>
+<p align="center"><em>Glossary</em></p>
+
+---
+
 ## How it works
 
 ```text
